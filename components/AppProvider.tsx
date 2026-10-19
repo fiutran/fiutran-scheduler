@@ -1,13 +1,32 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { getBusyEvents, getPeople } from "@/lib/calendarSource";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  GoogleNotConnectedError,
+  connectGoogle,
+  createGoogleEvent,
+  disconnectGoogle,
+  getBusyEvents,
+  getGoogleBusyEvents,
+  getGoogleStatus,
+  getPeople,
+  type GoogleStatus,
+} from "@/lib/calendarSource";
 import { buildBusyIndex, type BusyIndex } from "@/lib/availability";
 import { localDateIso } from "@/lib/time";
 import type { BusyEvent, CalendarProvider, Meeting, Person, TimeOffBlock } from "@/lib/types";
 import { addDaysIso, getDemoWeek } from "@/lib/week";
 
-type Confirmation = { meeting: Meeting; viewerTz: string } | null;
+/** Outcome of writing a sent meeting to your real Google Calendar (absent when Google isn't really connected). */
+export type GoogleWrite = { state: "saving" } | { state: "saved"; link?: string } | { state: "failed"; error: string };
+type Confirmation = { meeting: Meeting; viewerTz: string; google?: GoogleWrite } | null;
+
+/** Real Google Calendar connection for "you". `configured` is false when the deployment has no credentials. */
+export type GoogleSync = GoogleStatus & {
+  lastSynced: number | null;
+  syncing: boolean;
+  error: string | null;
+};
 
 type AppState = {
   ready: boolean;
@@ -28,6 +47,8 @@ type AppState = {
   updateMe: (patch: Partial<Pick<Person, "timeZone" | "workStartMin" | "workEndMin" | "workDays">>) => void;
   connections: Record<CalendarProvider, boolean>;
   setConnection: (p: CalendarProvider, on: boolean) => void;
+  google: GoogleSync;
+  syncGoogle: () => void;
   timeOff: TimeOffBlock[];
   addTimeOff: (b: Omit<TimeOffBlock, "id">) => void;
   removeTimeOff: (id: string) => void;
@@ -74,6 +95,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
   const [timeOff, setTimeOff] = useState<TimeOffBlock[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [google, setGoogle] = useState<GoogleSync>({
+    configured: false,
+    connected: false,
+    email: null,
+    lastSynced: null,
+    syncing: false,
+    error: null,
+  });
+  const [googleEvents, setGoogleEvents] = useState<BusyEvent[]>([]);
+  const range = useRef<{ from: Date; to: Date } | null>(null);
 
   const [invited, setInvited] = useState<string[]>([]);
   const [durationMin, setDurationMin] = useState(30);
@@ -96,8 +127,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Pad the range by a day each side so every zone's view of the week is covered.
       const from = new Date(`${addDaysIso(week[0], -1)}T00:00:00Z`);
       const to = new Date(`${addDaysIso(week[4], 2)}T00:00:00Z`);
-      const lists = await Promise.all(people.map((p) => getBusyEvents(p.id, from, to)));
+      range.current = { from, to };
+      const [lists, status] = await Promise.all([
+        Promise.all(people.map((p) => getBusyEvents(p.id, from, to))),
+        getGoogleStatus(),
+      ]);
       if (cancelled) return;
+      setGoogle((g) => ({ ...g, ...status }));
+      if (status.connected) setConnections((c) => ({ ...c, google: true }));
       setBasePeople(people);
       setSourceEvents(lists.flat());
       setInvited(people.filter((p) => p.id !== "maya").map((p) => p.id));
@@ -111,6 +148,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const meId = basePeople.find((p) => p.isMe)?.id;
+
+  /** Pulls your real Google events for the week. Runs on load, on tab focus, and after sending an invite. */
+  const syncGoogle = useCallback(async () => {
+    if (!range.current || !meId) return;
+    setGoogle((g) => ({ ...g, syncing: true }));
+    try {
+      const list = await getGoogleBusyEvents(meId, range.current.from, range.current.to);
+      setGoogleEvents(list);
+      setGoogle((g) => ({ ...g, syncing: false, error: null, lastSynced: Date.now() }));
+    } catch (err) {
+      if (err instanceof GoogleNotConnectedError) {
+        setGoogleEvents([]);
+        setConnections((c) => ({ ...c, google: false }));
+        setGoogle((g) => ({ ...g, connected: false, email: null, syncing: false, error: err.message }));
+      } else {
+        setGoogle((g) => ({ ...g, syncing: false, error: (err as Error).message }));
+      }
+    }
+  }, [meId]);
+
+  useEffect(() => {
+    if (!ready || !google.connected) return;
+    syncGoogle();
+    // Two-way check: edit your Google Calendar in another tab, come back, and the grid updates.
+    const onVisible = () => document.visibilityState === "visible" && syncGoogle();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [ready, google.connected, syncGoogle]);
+
+  const setConnection = useCallback(
+    (p: CalendarProvider, on: boolean) => {
+      // Outlook is always simulated; Google is real when this deployment has credentials.
+      if (p !== "google" || !google.configured) {
+        setConnections((cur) => ({ ...cur, [p]: on }));
+        return;
+      }
+      if (on) {
+        connectGoogle();
+        return;
+      }
+      disconnectGoogle().finally(() => {
+        setGoogleEvents([]);
+        setConnections((cur) => ({ ...cur, google: false }));
+        setGoogle((g) => ({ ...g, connected: false, email: null, lastSynced: null, error: null }));
+      });
+    },
+    [google.configured],
+  );
+
   const people = useMemo(
     () => basePeople.map((p) => (p.isMe ? { ...p, ...mePatch } : p)),
     [basePeople, mePatch],
@@ -121,10 +208,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const meId = me?.id;
     // My own calendar events only count while that calendar is connected (simulated sync).
     const fromCalendars = sourceEvents.filter(
-      (e) => e.personId !== meId || e.source === "fiutran" || e.source === "timeoff" || connections[e.source],
+      (e) =>
+        e.personId !== meId ||
+        e.source === "fiutran" ||
+        e.source === "timeoff" ||
+        // Real Google replaces the sample Google events on your row.
+        (connections[e.source] && !(e.source === "google" && google.connected)),
     );
+    const fromGoogle = google.connected ? googleEvents : [];
     const fromMeetings: BusyEvent[] = meetings.flatMap((m) =>
-      m.attendeeIds.map((pid) => ({
+      // Once a meeting is in your Google Calendar, your row shows Google's copy, so deleting it there frees the slot.
+      m.attendeeIds.filter((pid) => !(m.googleEventId && google.connected && pid === meId)).map((pid) => ({
         id: `${m.id}-${pid}`,
         personId: pid,
         startUtc: m.startUtc,
@@ -143,8 +237,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           source: "timeoff" as const,
         }))
       : [];
-    return [...fromCalendars, ...fromMeetings, ...fromTimeOff];
-  }, [sourceEvents, meetings, timeOff, connections, me?.id]);
+    return [...fromCalendars, ...fromGoogle, ...fromMeetings, ...fromTimeOff];
+  }, [sourceEvents, meetings, timeOff, connections, me?.id, google.connected, googleEvents]);
 
   const busyIndex = useMemo(() => buildBusyIndex(events), [events]);
 
@@ -173,10 +267,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       attendeeIds: people.filter((p) => invited.includes(p.id)).map((p) => p.id),
     };
     setMeetings((cur) => [...cur, meeting]);
-    setConfirmation({ meeting, viewerTz });
     setSelectionStart(null);
     setTitle("");
-  }, [selectionStart, invited, title, durationMin, people, viewerTz]);
+
+    const meInvited = people.some((p) => p.isMe && invited.includes(p.id));
+    if (!google.connected || !meInvited) {
+      setConfirmation({ meeting, viewerTz });
+      return;
+    }
+    // Two-way: write the meeting to your real Google Calendar.
+    setConfirmation({ meeting, viewerTz, google: { state: "saving" } });
+    const update = (g: GoogleWrite) =>
+      setConfirmation((c) => (c && c.meeting.id === meeting.id ? { ...c, google: g } : c));
+    createGoogleEvent({
+      title: meeting.title,
+      startUtc: meeting.startUtc,
+      endUtc: meeting.endUtc,
+      attendeeNames: people.filter((p) => meeting.attendeeIds.includes(p.id)).map((p) => p.name),
+    })
+      .then(async ({ id, htmlLink }) => {
+        await syncGoogle();
+        setMeetings((cur) => cur.map((m) => (m.id === meeting.id ? { ...m, googleEventId: id } : m)));
+        update({ state: "saved", link: htmlLink });
+      })
+      .catch((err: Error) => update({ state: "failed", error: err.message }));
+  }, [selectionStart, invited, title, durationMin, people, viewerTz, google.connected, syncGoogle]);
 
   const value: AppState = {
     ready,
@@ -192,7 +307,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSelectedDay,
     updateMe: (patch) => setMePatch((cur) => ({ ...cur, ...patch })),
     connections,
-    setConnection: (p, on) => setConnections((cur) => ({ ...cur, [p]: on })),
+    setConnection,
+    google,
+    syncGoogle,
     timeOff,
     addTimeOff: (b) => setTimeOff((cur) => [...cur, { ...b, id: newId("off") }].sort((a, z) => a.startUtc.localeCompare(z.startUtc))),
     removeTimeOff: (id) => setTimeOff((cur) => cur.filter((b) => b.id !== id)),

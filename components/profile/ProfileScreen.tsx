@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { useApp } from "../AppProvider";
 import { Icon, ProviderBadge } from "../Icon";
-import { PROFILE_ZONES, fmtDate, fmtRange, minToHHMM, tzAbbr, zonedToUtc } from "@/lib/time";
+import { PROFILE_ZONES, fmtDate, fmtRange, fmtTime, minToHHMM, tzAbbr, zonedToUtc } from "@/lib/time";
 import type { CalendarProvider } from "@/lib/types";
 
 const STEPS = Array.from({ length: 49 }, (_, i) => i * 30); // 00:00 ... 24:00
@@ -143,36 +143,101 @@ function HoursCard() {
   );
 }
 
+const GOOGLE_RESULT: Record<string, { ok: boolean; text: string }> = {
+  connected: {
+    ok: true,
+    text: "Google Calendar connected. Your real events now show on your row, and meetings you send are added to your calendar.",
+  },
+  denied: { ok: false, text: "Google sign-in was cancelled. Nothing was connected." },
+  "missing-permission": {
+    ok: false,
+    text: "Google didn't grant calendar access. Connect again and leave the calendar permission ticked.",
+  },
+  error: { ok: false, text: "Couldn't connect to Google. Please try again." },
+  "not-configured": { ok: false, text: "Real Google sync isn't set up on this deployment yet, so Google stays simulated." },
+};
+
 function CalendarsCard() {
-  const { connections, setConnection, me } = useApp();
-  const rows: { id: CalendarProvider; name: string }[] = [
-    { id: "outlook", name: "Outlook" },
-    { id: "google", name: "Google Calendar" },
+  const { connections, setConnection, me, google, syncGoogle, viewerTz } = useApp();
+  const [result, setResult] = useState<string | null>(null);
+
+  // Read and clear ?google=… left by the sign-in redirect.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const status = url.searchParams.get("google");
+    if (!status) return;
+    setResult(status);
+    url.searchParams.delete("google");
+    window.history.replaceState(null, "", url.pathname + url.search);
+  }, []);
+
+  const rows: { id: CalendarProvider; name: string; live: boolean }[] = [
+    { id: "outlook", name: "Outlook", live: false },
+    { id: "google", name: "Google Calendar", live: google.configured },
   ];
+  const message = result ? GOOGLE_RESULT[result] : null;
+
   return (
     <section className="card p-5" aria-labelledby="cal-title">
       <h2 id="cal-title" className="flex items-center gap-2 font-semibold">
         <Icon name="link" className="h-4 w-4 text-accent-600" />
         Connected calendars
       </h2>
+      {message && (
+        <p
+          role="status"
+          className={`mt-3 rounded-lg border p-3 text-sm ${
+            message.ok ? "border-accent-200 bg-accent-50 text-accent-800" : "border-busy-300 bg-busy-50 text-busy-700"
+          }`}
+        >
+          {message.text}
+        </p>
+      )}
       <ul className="mt-3 divide-y divide-line">
         {rows.map((r) => {
           const on = connections[r.id];
+          const realGoogle = r.id === "google" && google.connected;
           return (
             <li key={r.id} className="flex items-center gap-3 py-3">
               <ProviderBadge provider={r.id} />
               <div className="min-w-0 flex-1">
-                <p className="font-medium">{r.name}</p>
+                <p className="flex items-center gap-2 font-medium">
+                  {r.name}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${
+                      r.live ? "bg-accent-50 text-accent-700 ring-accent-200" : "bg-canvas text-ink-soft ring-line"
+                    }`}
+                  >
+                    {r.live ? "Live" : "Sample"}
+                  </span>
+                </p>
                 <p className="truncate text-sm text-ink-faint">
                   {on ? (
                     <>
-                      <span className="text-accent-700">Connected</span> · {r.id === "outlook" ? me.email : me.email.replace("fiutran", "gmail")}
+                      <span className="text-accent-700">Connected</span> ·{" "}
+                      {realGoogle ? google.email : r.id === "outlook" ? me.email : me.email.replace("fiutran", "gmail")}
                     </>
                   ) : (
                     "Not connected"
                   )}
                 </p>
+                {realGoogle && (
+                  <p className="text-xs text-ink-faint" aria-live="polite">
+                    {google.syncing
+                      ? "Syncing…"
+                      : google.error
+                        ? <span className="text-busy-700">{google.error}</span>
+                        : google.lastSynced
+                          ? `Synced at ${fmtTime(google.lastSynced, viewerTz)} ${tzAbbr(viewerTz, google.lastSynced)}`
+                          : null}
+                  </p>
+                )}
               </div>
+              {realGoogle && (
+                <button type="button" className="btn-secondary" onClick={syncGoogle} disabled={google.syncing}>
+                  Sync now
+                </button>
+              )}
               <button
                 type="button"
                 className={on ? "btn-secondary" : "btn-primary"}
@@ -187,7 +252,15 @@ function CalendarsCard() {
       </ul>
       <p className="mt-2 flex gap-2 rounded-lg bg-canvas p-3 text-sm text-ink-soft">
         <Icon name="info" className="mt-0.5 h-4 w-4 shrink-0" />
-        Read-only. Busy times sync automatically; nothing in your calendar is changed.
+        {google.configured ? (
+          <span>
+            Outlook is simulated with sample data. Google is a real connection: Fiutran reads your events to find
+            your busy times and adds the meetings you send to your Google Calendar. Teammates are only named in the
+            event description, so Google emails no one.
+          </span>
+        ) : (
+          <span>Read-only. Busy times sync automatically; nothing in your calendar is changed.</span>
+        )}
       </p>
     </section>
   );

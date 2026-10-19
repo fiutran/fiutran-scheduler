@@ -42,3 +42,62 @@ export async function getBusyEvents(
     (e) => e.personId === personId && Date.parse(e.startUtc) < to && Date.parse(e.endUtc) > from,
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Real Google Calendar for "you" (two-way). Server side: app/api/google/* */
+/* ------------------------------------------------------------------ */
+
+export type GoogleStatus = { configured: boolean; connected: boolean; email: string | null };
+
+/** Whether this deployment has Google credentials, and whether you're signed in. */
+export async function getGoogleStatus(): Promise<GoogleStatus> {
+  try {
+    const res = await fetch("/api/google/status", { cache: "no-store" });
+    if (!res.ok) throw new Error();
+    return (await res.json()) as GoogleStatus;
+  } catch {
+    return { configured: false, connected: false, email: null };
+  }
+}
+
+/** Full-page redirect to Google's consent screen; returns to My profile afterwards. */
+export function connectGoogle(): void {
+  window.location.href = "/api/google/connect";
+}
+
+export async function disconnectGoogle(): Promise<void> {
+  await fetch("/api/google/disconnect", { method: "POST" });
+}
+
+export class GoogleNotConnectedError extends Error {}
+
+/** Read: your real Google events in the range, as busy blocks on your row. */
+export async function getGoogleBusyEvents(
+  personId: string,
+  rangeStartUtc: Date,
+  rangeEndUtc: Date,
+): Promise<BusyEvent[]> {
+  const q = new URLSearchParams({ start: rangeStartUtc.toISOString(), end: rangeEndUtc.toISOString() });
+  const res = await fetch(`/api/google/events?${q}`, { cache: "no-store" });
+  if (res.status === 401) throw new GoogleNotConnectedError((await res.json()).error);
+  if (!res.ok) throw new Error("Couldn't load your Google Calendar");
+  const { events } = (await res.json()) as { events: { id: string; startUtc: string; endUtc: string; title: string }[] };
+  return events.map((e) => ({ id: `google-${e.id}`, personId, startUtc: e.startUtc, endUtc: e.endUtc, title: e.title, source: "google" }));
+}
+
+/** Write: creates the meeting in your Google Calendar. Returns its Google id and link. */
+export async function createGoogleEvent(meeting: {
+  title: string;
+  startUtc: string;
+  endUtc: string;
+  attendeeNames: string[];
+}): Promise<{ id: string; htmlLink?: string }> {
+  const res = await fetch("/api/google/events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(meeting),
+  });
+  if (res.status === 401) throw new GoogleNotConnectedError((await res.json()).error);
+  if (!res.ok) throw new Error("Couldn't add the meeting to Google Calendar");
+  return (await res.json()) as { id: string; htmlLink?: string };
+}

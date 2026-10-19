@@ -1,6 +1,6 @@
 # Fiutran Scheduler (prototype)
 
-Clickable prototype of a team meeting scheduler. **Sample data only**: no calendar connections, database, auth or backend.
+Clickable prototype of a team meeting scheduler. Runs on **sample data**, with an optional **real, two-way Google Calendar** connection for "you" (see below). No database.
 
 ```bash
 cd fiutran-scheduler
@@ -14,7 +14,8 @@ Stack: Next.js (App Router), TypeScript, Tailwind CSS, `date-fns-tz` for IANA ti
 
 | Path | What |
 |---|---|
-| `lib/calendarSource.ts` | **The only data entry point.** `getPeople()` and `getBusyEvents(personId, rangeStartUtc, rangeEndUtc)`. Returns sample data today. |
+| `lib/calendarSource.ts` | **The only data entry point.** `getPeople()` and `getBusyEvents(personId, rangeStartUtc, rangeEndUtc)` (sample data), plus the real Google read/write calls. |
+| `app/api/google/*`, `lib/server/googleAuth.ts` | Server side of the Google connection: OAuth, token refresh, encrypted cookie, Calendar API calls. |
 | `lib/mockData.ts` | Sample team and a week of events, written in each person's local time and converted to UTC. Only imported by `calendarSource.ts`. |
 | `lib/availability.ts` | Free / busy / off-hours logic and suggested-time search. Pure functions, UTC in, UTC out. |
 | `lib/time.ts` | Time zone helpers: conversion, formatting, abbreviations. |
@@ -22,6 +23,28 @@ Stack: Next.js (App Router), TypeScript, Tailwind CSS, `date-fns-tz` for IANA ti
 | `app/` | Routes: `/` Schedule a meeting, `/team`, `/profile`. |
 
 All event times are stored as UTC and converted only for display.
+
+## Real Google Calendar (two-way, optional)
+
+When the three env vars in `.env.example` are set, **My profile → Google Calendar → Connect** signs in with Google for real:
+
+- **Read:** your timed events from your primary calendar show as busy on your row (titles visible only to you). All-day events, events marked "Free" and events you declined are ignored. Re-syncs when you return to the tab, or with **Sync now**.
+- **Write:** **Send invite** adds the meeting to your Google Calendar (`sendUpdates=none`). Sample teammates are named in the description only, never added as guests, so Google emails no one.
+- Delete or move the event in Google and your row updates on the next sync.
+- Tokens are kept in an encrypted, httpOnly cookie (AES-256-GCM, keyed by `AUTH_SECRET`). **Disconnect** revokes access at Google.
+- Outlook and the other four teammates stay sample data.
+
+Setup (about 10 minutes):
+
+1. [Google Cloud console](https://console.cloud.google.com/): create a project and enable the **Google Calendar API**.
+2. **OAuth consent screen** (Google Auth Platform → Branding / Audience): user type **External**, leave it in **Testing**, and add your Gmail address under **Test users**.
+3. **Data access**: add the scope `https://www.googleapis.com/auth/calendar.events`.
+4. **Clients → Create client → Web application**. Authorized redirect URIs, one per site you'll test on:
+   - `http://localhost:3000/api/google/callback`
+   - `https://<your-vercel-url>/api/google/callback`
+5. Put the client ID and secret, plus a random `AUTH_SECRET`, in `.env.local` (local) or in Vercel's Environment Variables, then redeploy.
+
+While the app is in Testing mode Google shows a "Google hasn't verified this app" warning (choose Continue), only listed test users can sign in, and the connection expires after 7 days.
 
 ## Connecting real calendars later
 
