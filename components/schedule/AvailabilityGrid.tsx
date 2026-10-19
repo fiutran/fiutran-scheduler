@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../AppProvider";
 import { busyAt, cellState, isWorking, type CellState } from "@/lib/availability";
 import { SLOT_MS, dayCells, fmtDate, fmtRange, fmtTime, localParts, minToHHMM, tzAbbr } from "@/lib/time";
@@ -45,13 +45,46 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
     const need = Math.max(1, Math.ceil(invitedPeople.length / 2));
     let first = cells.findIndex((c) => invitedPeople.filter((p) => isWorking(p, c, c + SLOT_MS)).length >= need);
     if (first < 0) first = 16;
-    const cell = el.querySelector<HTMLElement>(`[data-idx="${Math.max(0, first - 1)}"]`);
+    // Land exactly on the hour at or before the half-hour preceding `first`, so the left label is whole.
+    let target = Math.max(0, first - 1);
+    while (target > 0 && localParts(cells[target], viewerTz).minute % 60 !== 0) target--;
     const nameCol = el.querySelector<HTMLElement>("[data-namecol]");
-    if (cell && nameCol) el.scrollTo({ left: cell.offsetLeft - nameCol.offsetWidth, behavior: "smooth" });
+    const leftOf = (i: number) =>
+      (el.querySelector<HTMLElement>(`[data-idx="${i}"]`)?.offsetLeft ?? 0) - (nameCol?.offsetWidth ?? 0);
+    // Near the end of the day the browser would clamp short of the hour; step back to one it can reach.
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    while (target > 0 && leftOf(target) > maxScroll + 0.5) {
+      target--;
+      while (target > 0 && localParts(cells[target], viewerTz).minute % 60 !== 0) target--;
+    }
+    if (nameCol) el.scrollTo({ left: leftOf(target), behavior: "smooth" });
     setFocusIdx(Math.max(0, first));
     // Only re-run when the visible day, zone or invite list changes, not on every busy update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDay, viewerTz, invitedPeople.map((p) => p.id).join(",")]);
+
+  // Hide any hour label that isn't fully visible (sticky name column on the left, container edge on the right).
+  const syncLabels = useCallback(() => {
+    const el = scrollRef.current;
+    const nameCol = el?.querySelector<HTMLElement>("[data-namecol]");
+    if (!el || !nameCol) return;
+    const box = el.getBoundingClientRect();
+    const minX = nameCol.getBoundingClientRect().right;
+    const maxX = box.left + el.clientLeft + el.clientWidth;
+    el.querySelectorAll<HTMLElement>("[data-hour-label]").forEach((label) => {
+      const r = label.getBoundingClientRect();
+      label.style.visibility = r.left >= minX - 0.5 && r.right <= maxX + 0.5 ? "visible" : "hidden";
+    });
+  }, []);
+
+  useLayoutEffect(syncLabels);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(syncLabels);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [syncLabels, invitedPeople.length === 0]);
 
   const viewerAbbr = tzAbbr(viewerTz, cells[0]);
 
@@ -107,7 +140,12 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
           Invite at least one person to see availability.
         </p>
       ) : (
-        <div ref={scrollRef} className="relative overflow-x-auto rounded-lg border border-line" onMouseLeave={() => setHover(null)}>
+        <div
+          ref={scrollRef}
+          className="relative snap-x snap-mandatory overflow-x-auto rounded-lg border border-line [scroll-padding-left:var(--name-w)]"
+          onScroll={syncLabels}
+          onMouseLeave={() => setHover(null)}
+        >
           <div className="relative w-max">
             {/* Hour labels */}
             <div className="flex border-b border-line bg-canvas">
@@ -115,9 +153,13 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
               {cells.map((c, i) => {
                 const { minute } = localParts(c, viewerTz);
                 return (
-                  <div key={c} className="relative h-8 w-[var(--cell-w)] shrink-0" aria-hidden="true">
+                  <div
+                    key={c}
+                    className={`relative h-8 w-[var(--cell-w)] shrink-0 ${minute % 60 === 0 ? "snap-start" : ""}`}
+                    aria-hidden="true"
+                  >
                     {minute % 60 === 0 && (
-                      <span className="absolute left-1 top-2 font-mono text-[11px] text-ink-faint">
+                      <span data-hour-label className="absolute left-1 top-2 whitespace-nowrap font-mono text-[11px] text-ink-faint">
                         {fmtTime(c, viewerTz)}
                       </span>
                     )}

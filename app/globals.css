@@ -35,7 +35,14 @@ body { @apply bg-canvas text-ink font-sans antialiased; }
     @apply inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-white px-4 text-sm font-medium text-ink-soft
       transition-colors hover:border-accent-200 hover:bg-accent-50;
   }
-  .chip[aria-pressed="true"] { @apply border-accent-600 bg-accent-600 text-white hover:bg-accent-700; }
+  /* Selected is always solid accent: no fade-in, no hover/focus fill change. Focus only adds the outline ring. */
+  .chip[aria-pressed="true"],
+  .chip[aria-pressed="true"]:hover,
+  .chip[aria-pressed="true"]:focus,
+  .chip[aria-pressed="true"]:active {
+    @apply border-accent-600 bg-accent-600 text-white;
+    transition: none;
+  }
   .btn {
     @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors
       disabled:cursor-not-allowed disabled:opacity-50;

@@ -298,14 +298,21 @@ function TimeOffCard() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{b.reason}</p>
                   <p className="font-mono text-xs text-ink-soft">
-                    {fmtDate(s, viewerTz)} · {fmtRange(s, e, viewerTz)}
+                    {fmtDate(s, me.timeZone)} · {fmtRange(s, e, me.timeZone)}
+                    {viewerTz !== me.timeZone && (
+                      <span className="text-ink-faint">
+                        {" "}
+                        · {fmtDate(s, viewerTz) !== fmtDate(s, me.timeZone) && `${fmtDate(s, viewerTz)} `}
+                        {fmtRange(s, e, viewerTz)}
+                      </span>
+                    )}
                   </p>
                 </div>
                 <button
                   type="button"
                   className="btn-secondary"
                   onClick={() => removeTimeOff(b.id)}
-                  aria-label={`Remove ${b.reason} on ${fmtDate(s, viewerTz)}`}
+                  aria-label={`Remove ${b.reason} on ${fmtDate(s, me.timeZone)}`}
                 >
                   <Icon name="trash" className="h-4 w-4" />
                   Remove
