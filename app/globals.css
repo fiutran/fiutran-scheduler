@@ -1,0 +1,53 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --name-w: 176px;
+  --cell-w: 30px;
+}
+@media (max-width: 640px) {
+  :root { --name-w: 112px; }
+}
+/* Larger hit areas on touch screens. */
+@media (pointer: coarse) {
+  :root { --cell-w: 44px; }
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { @apply bg-canvas text-ink font-sans antialiased; }
+
+:focus-visible {
+  outline: 2px solid theme("colors.accent.600");
+  outline-offset: 2px;
+}
+
+@layer components {
+  .card { @apply rounded-xl border border-line bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]; }
+  .label { @apply text-sm font-medium text-ink-soft; }
+  .chip {
+    @apply inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-white px-4 text-sm font-medium text-ink-soft
+      transition-colors hover:border-accent-200 hover:bg-accent-50;
+  }
+  .chip[aria-pressed="true"] { @apply border-accent-600 bg-accent-600 text-white hover:bg-accent-700; }
+  .btn {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary { @apply btn bg-accent-600 text-white hover:bg-accent-700 disabled:hover:bg-accent-600; }
+  .btn-secondary { @apply btn border border-line bg-white text-ink hover:bg-canvas; }
+  .field {
+    @apply min-h-11 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink
+      hover:border-ink-faint focus-visible:border-accent-600;
+  }
+  .hatch {
+    background-color: #eef0f3;
+    background-image: repeating-linear-gradient(135deg, #d6dae0 0 1.5px, transparent 1.5px 6px);
+  }
+}
