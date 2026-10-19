@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { isGoogleConfigured, readSession } from "@/lib/server/googleAuth";
+import { ensureName, isGoogleConfigured, readSession } from "@/lib/server/googleAuth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const configured = isGoogleConfigured();
-  const session = configured ? await readSession() : null;
+  const stored = configured ? await readSession() : null;
+  const session = stored ? await ensureName(stored) : null;
   return NextResponse.json({
     configured,
     connected: Boolean(session),

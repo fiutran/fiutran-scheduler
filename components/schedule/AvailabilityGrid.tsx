@@ -35,7 +35,11 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
 
   const total = invitedPeople.length;
   const durCells = durationMin / 30;
-  const selIdx = selectionStart === null ? -1 : cells.indexOf(selectionStart);
+  // Fractional cell position, so custom times like 15:15 highlight correctly.
+  const selPos =
+    selectionStart !== null && selectionStart >= cells[0] && selectionStart < cells[0] + cells.length * SLOT_MS
+      ? (selectionStart - cells[0]) / SLOT_MS
+      : -1;
   const nowIdx = now >= cells[0] && now < cells[cells.length - 1] + SLOT_MS ? Math.floor((now - cells[0]) / SLOT_MS) : -1;
 
   // Scroll so the earliest working half-hour among invitees is near the left edge.
@@ -237,13 +241,13 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
             </div>
 
             {/* Selected range, drawn across all rows */}
-            {selIdx >= 0 && (
+            {selPos >= 0 && (
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute bottom-0 top-8 z-[5] rounded-[3px] border-2 border-accent-700 bg-accent-600/10 shadow-[0_0_0_3px_rgba(31,95,214,0.18)]"
                 style={{
-                  left: `calc(var(--name-w) + ${selIdx} * var(--cell-w))`,
-                  width: `calc(${Math.min(durCells, cells.length - selIdx)} * var(--cell-w))`,
+                  left: `calc(var(--name-w) + ${selPos} * var(--cell-w))`,
+                  width: `calc(${Math.min(durCells, cells.length - selPos)} * var(--cell-w))`,
                 }}
               />
             )}

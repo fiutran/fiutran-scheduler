@@ -115,8 +115,8 @@ export function minToHHMM(min: number): string {
 
 export function durationLabel(min: number): string {
   if (min < 60) return `${min} min`;
-  const h = min / 60;
-  return `${h} hr`;
+  if (min % 30 === 0) return `${min / 60} hr`;
+  return `${Math.floor(min / 60)} hr ${min % 60} min`;
 }
 
 /** Human-readable difference between two zones, e.g. "3h 30m behind". */

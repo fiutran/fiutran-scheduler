@@ -125,6 +125,30 @@ export async function calendarFetch(path: string, init: RequestInit = {}): Promi
   });
 }
 
+/** Your name and email from Google's OpenID userinfo endpoint (needs the "profile" scope). */
+export async function fetchUserInfo(accessToken: string): Promise<{ name?: string; given_name?: string; email?: string }> {
+  const res = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+  return res.ok ? res.json() : {};
+}
+
+/** Fills in a missing name on the session (older sessions, or an id_token without name claims). */
+export async function ensureName(session: GoogleSession): Promise<GoogleSession> {
+  if (session.name) return session;
+  try {
+    const fresh = await activeSession();
+    const info = await fetchUserInfo(fresh.accessToken);
+    if (!info.name) return fresh;
+    const next = { ...fresh, name: info.name, firstName: info.given_name };
+    await writeSession(next);
+    return next;
+  } catch {
+    return session;
+  }
+}
+
 /** Rejects cross-site POSTs (defence in depth on top of the SameSite=Lax cookie). */
 export function sameOrigin(req: Request): boolean {
   const origin = req.headers.get("origin");

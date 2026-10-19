@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { STATE_COOKIE, isGoogleConfigured, redirectUri, tokenRequest, writeSession } from "@/lib/server/googleAuth";
+import { STATE_COOKIE, fetchUserInfo, isGoogleConfigured, redirectUri, tokenRequest, writeSession } from "@/lib/server/googleAuth";
 
 /** Google redirects here after consent. Swaps the code for tokens and stores them in the encrypted cookie. */
 export async function GET(req: NextRequest) {
@@ -26,7 +26,9 @@ export async function GET(req: NextRequest) {
     if (!/calendar\.events/.test((t as { scope?: string }).scope ?? "")) return back("missing-permission");
 
     // id_token came straight from Google's token endpoint over TLS, so reading its payload is safe.
-    const payload = t.id_token ? JSON.parse(Buffer.from(t.id_token.split(".")[1], "base64url").toString()) : {};
+    let payload = t.id_token ? JSON.parse(Buffer.from(t.id_token.split(".")[1], "base64url").toString()) : {};
+    // Some sign-ins return an id_token without name claims; ask Google directly in that case.
+    if (!payload.name) payload = { ...payload, ...(await fetchUserInfo(t.access_token).catch(() => ({}))) };
     await writeSession({
       accessToken: t.access_token,
       refreshToken: t.refresh_token,

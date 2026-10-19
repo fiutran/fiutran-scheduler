@@ -5,7 +5,7 @@ import { parseISO, format } from "date-fns";
 import { useApp } from "../AppProvider";
 import { Icon } from "../Icon";
 import { suggestSlots, type Slot } from "@/lib/availability";
-import { fmtDate, fmtRange } from "@/lib/time";
+import { durationLabel, fmtRange } from "@/lib/time";
 import type { Person } from "@/lib/types";
 
 export function Suggestions({ invitedPeople }: { invitedPeople: Person[] }) {
@@ -34,13 +34,13 @@ export function Suggestions({ invitedPeople }: { invitedPeople: Person[] }) {
         Suggested times
       </h2>
       <p className="mb-3 text-sm text-ink-faint">
-        {durationMin} min on {dayName}, within everyone&apos;s working hours.
+        {durationLabel(durationMin)} on {dayName}, within everyone&apos;s working hours. One click picks the time.
       </p>
 
       {invitedPeople.length === 0 ? (
         <p className="text-sm text-ink-soft">Invite someone to get suggestions.</p>
       ) : perfect.length > 0 ? (
-        <ul className="space-y-2">
+        <ul className="flex flex-wrap gap-2">
           {perfect.map((s) => (
             <li key={s.start}>
               <SlotButton slot={s} total={invitedPeople.length} active={selectionStart === s.start} onPick={setSelectionStart} tz={viewerTz} />
@@ -57,7 +57,7 @@ export function Suggestions({ invitedPeople }: { invitedPeople: Person[] }) {
             </p>
           </div>
           {best.length ? (
-            <ul className="space-y-2">
+            <ul className="flex flex-wrap gap-2">
               {best.map((s) => (
                 <li key={s.start}>
                   <SlotButton slot={s} total={invitedPeople.length} active={selectionStart === s.start} onPick={setSelectionStart} tz={viewerTz} />
@@ -99,33 +99,29 @@ function SlotButton({
   tz: string;
 }) {
   const allFree = slot.missing.length === 0;
+  const missing = slot.missing
+    .map((m) => `${m.person.firstName} (${m.status === "busy" ? "busy" : "off hours"})`)
+    .join(", ");
   return (
     <button
       type="button"
       aria-pressed={active}
       onClick={() => onPick(slot.start)}
-      className={`flex min-h-11 w-full items-start justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+      title={allFree ? "Everyone free" : `Missing: ${missing}`}
+      className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 py-1.5 text-left transition-colors ${
         active ? "border-accent-600 bg-accent-50 ring-1 ring-accent-600" : "border-line bg-white hover:border-accent-200 hover:bg-accent-50"
       }`}
     >
       <span>
         <span className="block font-mono text-sm font-medium">{fmtRange(slot.start, slot.end, tz)}</span>
-        <span className="block text-xs text-ink-faint">{fmtDate(slot.start, tz)}</span>
-        {!allFree && (
-          <span className="mt-1 block text-xs text-ink-soft">
-            Missing:{" "}
-            {slot.missing
-              .map((m) => `${m.person.firstName} (${m.status === "busy" ? "busy" : "off hours"})`)
-              .join(", ")}
-          </span>
-        )}
+        {!allFree && <span className="block max-w-[260px] truncate text-xs text-ink-soft">Missing: {missing}</span>}
       </span>
       <span
         className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
           allFree ? "bg-accent-600 text-white" : "bg-canvas text-ink-soft ring-1 ring-inset ring-line"
         }`}
       >
-        {allFree ? "Everyone free" : `${slot.freeIds.length} of ${total} free`}
+        {allFree ? "Everyone free" : `${slot.freeIds.length} of ${total}`}
       </span>
     </button>
   );

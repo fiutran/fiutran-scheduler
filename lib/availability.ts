@@ -21,12 +21,13 @@ export function busyAt(index: BusyIndex, personId: string, start: number, end: n
   return index.get(personId)?.find((b) => b.start < end && b.end > start)?.event;
 }
 
-/** True when every 30-minute step of [start, end) is inside the person's local working hours. */
+/** True when all of [start, end) is inside the person's local working hours. Works for any start and length. */
 export function isWorking(person: Person, start: number, end: number): boolean {
   for (let t = start; t < end; t += SLOT_MS) {
     const { isoDay, minute } = localParts(t, person.timeZone);
+    const len = Math.min(SLOT_MS, end - t) / 60_000;
     if (!person.workDays.includes(isoDay)) return false;
-    if (minute < person.workStartMin || minute + 30 > person.workEndMin) return false;
+    if (minute < person.workStartMin || minute + len > person.workEndMin) return false;
   }
   return true;
 }

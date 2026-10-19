@@ -76,6 +76,9 @@ export function useApp(): AppState {
   return v;
 }
 
+/** Length chips offered on the schedule screen. */
+export const STANDARD_LENGTHS = [30, 60, 90];
+
 let idSeq = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(idSeq++).toString(36)}`;
 
@@ -264,10 +267,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setInvited((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   }, []);
 
+  // A typed (custom) length is a one-off; standard lengths are kept for the next meeting.
+  const resetCustomLength = useCallback(() => setDurationMin((m) => (STANDARD_LENGTHS.includes(m) ? m : 30)), []);
+
   const clearDraft = useCallback(() => {
     setSelectionStart(null);
     setTitle("");
-  }, []);
+    resetCustomLength();
+  }, [resetCustomLength]);
 
   const sendInvite = useCallback(() => {
     if (selectionStart === null || invited.length === 0) return;
@@ -282,6 +289,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setMeetings((cur) => [...cur, meeting]);
     setSelectionStart(null);
     setTitle("");
+    resetCustomLength();
 
     const meInvited = people.some((p) => p.isMe && invited.includes(p.id));
     if (!google.connected || !meInvited) {
@@ -304,7 +312,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         update({ state: "saved", link: htmlLink });
       })
       .catch((err: Error) => update({ state: "failed", error: err.message }));
-  }, [selectionStart, invited, title, durationMin, people, viewerTz, google.connected, syncGoogle]);
+  }, [selectionStart, invited, title, durationMin, people, viewerTz, google.connected, syncGoogle, resetCustomLength]);
 
   const value: AppState = {
     ready,
