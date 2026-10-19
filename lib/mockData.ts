@@ -17,29 +17,30 @@ const h = (hhmm: string) => {
 
 export const MOCK_PEOPLE: Person[] = [
   {
-    id: "ananya",
-    name: "Ananya Rao",
-    firstName: "Ananya",
-    city: "Delhi",
+    // "You". Name and email are replaced by the connected Google account.
+    id: "me",
+    name: "You",
+    firstName: "You",
+    city: "India",
     timeZone: "Asia/Kolkata",
     workStartMin: h("10:00"),
     workEndMin: h("19:00"),
     workDays: [1, 2, 3, 4, 5],
     calendar: "outlook",
-    email: "ananya.rao@fiutran.example",
+    email: "you@fiutran.example",
     isMe: true,
   },
   {
-    id: "rohan",
-    name: "Rohan Mehta",
-    firstName: "Rohan",
+    id: "aarti",
+    name: "Aarti",
+    firstName: "Aarti",
     city: "Bengaluru",
     timeZone: "Asia/Kolkata",
     workStartMin: h("09:30"),
     workEndMin: h("18:30"),
     workDays: [1, 2, 3, 4, 5],
     calendar: "google",
-    email: "rohan.mehta@fiutran.example",
+    email: "aarti@fiutran.example",
   },
   {
     id: "lena",
@@ -83,7 +84,7 @@ export const MOCK_PEOPLE: Person[] = [
 type Row = [number | "all", string, string, string, CalendarProvider?];
 
 const SCHEDULES: Record<string, Row[]> = {
-  ananya: [
+  me: [
     ["all", "10:00", "10:30", "Team standup"],
     ["all", "13:00", "14:00", "Lunch"],
     [0, "11:00", "12:00", "Client call: Northwind"],
@@ -101,7 +102,7 @@ const SCHEDULES: Record<string, Row[]> = {
     [2, "16:00", "17:00", "Dentist appointment", "google"],
     [4, "18:30", "19:00", "School pickup", "google"],
   ],
-  rohan: [
+  aarti: [
     ["all", "10:00", "10:30", "Team standup"],
     ["all", "13:00", "13:45", "Lunch"],
     [0, "11:00", "12:30", "Focus time"],

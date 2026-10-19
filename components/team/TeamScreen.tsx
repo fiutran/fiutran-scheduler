@@ -17,6 +17,7 @@ import {
   zonedToUtc,
 } from "@/lib/time";
 import type { CalendarProvider, Person } from "@/lib/types";
+import { showYouTag } from "@/lib/people";
 
 export function TeamScreen() {
   const { people } = useApp();
@@ -47,7 +48,7 @@ const STATUS = {
 };
 
 function TeamCard({ person: p }: { person: Person }) {
-  const { now, busyIndex, viewerTz, selectedDay, connections } = useApp();
+  const { now, busyIndex, viewerTz, selectedDay, connections, google } = useApp();
 
   const status = !isWorking(p, now, now + 60_000)
     ? STATUS.off
@@ -61,9 +62,13 @@ function TeamCard({ person: p }: { person: Person }) {
   const startDay = localDateIso(whStart, viewerTz);
   const endDay = localDateIso(whEnd, viewerTz);
 
-  const calendars: CalendarProvider[] = p.isMe
-    ? (["outlook", "google"] as const).filter((c) => connections[c])
-    : [p.calendar];
+  // Your real Google Calendar replaces your sample calendars once connected.
+  const live = Boolean(p.isMe && google.connected);
+  const calendars: CalendarProvider[] = live
+    ? ["google"]
+    : p.isMe
+      ? (["outlook", "google"] as const).filter((c) => connections[c])
+      : [p.calendar];
 
   const initials = p.name
     .split(" ")
@@ -79,7 +84,7 @@ function TeamCard({ person: p }: { person: Person }) {
         <div className="min-w-0 flex-1">
           <h2 className="truncate font-semibold">
             {p.name}
-            {p.isMe && <span className="font-normal text-ink-faint"> (you)</span>}
+            {showYouTag(p) && <span className="font-normal text-ink-faint"> (you)</span>}
           </h2>
           <p className="truncate text-sm text-ink-soft">
             {p.city} · {p.timeZone.replace("_", " ")}
@@ -125,6 +130,15 @@ function TeamCard({ person: p }: { person: Person }) {
                 {c === "outlook" ? "Outlook" : "Google"}
               </span>
             ))
+          )}
+          {calendars.length > 0 && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${
+                live ? "bg-accent-50 text-accent-700 ring-accent-200" : "bg-canvas text-ink-soft ring-line"
+              }`}
+            >
+              {live ? "Live" : "Sample data"}
+            </span>
           )}
         </dd>
       </dl>

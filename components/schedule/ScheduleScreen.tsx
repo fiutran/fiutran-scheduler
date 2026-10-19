@@ -8,6 +8,7 @@ import { ConfirmationBanner } from "./ConfirmationBanner";
 import { MeetingPanel } from "./MeetingPanel";
 import { Suggestions } from "./Suggestions";
 import { durationLabel, tzAbbr } from "@/lib/time";
+import { showYouTag } from "@/lib/people";
 
 const LENGTHS = [30, 60, 90];
 
@@ -36,7 +37,7 @@ export function ScheduleScreen() {
                     onClick={() => toggleInvite(p.id)}
                   >
                     {p.firstName}
-                    {p.isMe && " (you)"}
+                    {showYouTag(p) && " (you)"}
                     <span className="font-mono text-xs opacity-80">{tzAbbr(p.timeZone, now)}</span>
                   </button>
                 ))}

@@ -6,5 +6,11 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const configured = isGoogleConfigured();
   const session = configured ? await readSession() : null;
-  return NextResponse.json({ configured, connected: Boolean(session), email: session?.email ?? null });
+  return NextResponse.json({
+    configured,
+    connected: Boolean(session),
+    email: session?.email ?? null,
+    name: session?.name ?? null,
+    firstName: session?.firstName ?? null,
+  });
 }

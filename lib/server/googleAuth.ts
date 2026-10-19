@@ -13,6 +13,7 @@ import { cookies } from "next/headers";
 export const GOOGLE_SCOPES = [
   "openid",
   "email",
+  "profile", // your name, so the "you" row shows who is signed in
   // Read your events and create the meetings you send. Nothing else in your Google account.
   "https://www.googleapis.com/auth/calendar.events",
 ];
@@ -25,6 +26,8 @@ export type GoogleSession = {
   refreshToken?: string;
   expiresAt: number; // epoch ms
   email: string;
+  name?: string;
+  firstName?: string;
 };
 
 export function isGoogleConfigured(): boolean {

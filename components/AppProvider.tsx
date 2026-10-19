@@ -99,6 +99,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     configured: false,
     connected: false,
     email: null,
+    name: null,
+    firstName: null,
     lastSynced: null,
     syncing: false,
     error: null,
@@ -162,7 +164,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (err instanceof GoogleNotConnectedError) {
         setGoogleEvents([]);
         setConnections((c) => ({ ...c, google: false }));
-        setGoogle((g) => ({ ...g, connected: false, email: null, syncing: false, error: err.message }));
+        setGoogle((g) => ({ ...g, connected: false, email: null, name: null, firstName: null, syncing: false, error: err.message }));
       } else {
         setGoogle((g) => ({ ...g, syncing: false, error: (err as Error).message }));
       }
@@ -192,15 +194,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       disconnectGoogle().finally(() => {
         setGoogleEvents([]);
         setConnections((cur) => ({ ...cur, google: false }));
-        setGoogle((g) => ({ ...g, connected: false, email: null, lastSynced: null, error: null }));
+        setGoogle((g) => ({ ...g, connected: false, email: null, name: null, firstName: null, lastSynced: null, error: null }));
       });
     },
     [google.configured],
   );
 
   const people = useMemo(
-    () => basePeople.map((p) => (p.isMe ? { ...p, ...mePatch } : p)),
-    [basePeople, mePatch],
+    () =>
+      basePeople.map((p) => {
+        if (!p.isMe) return p;
+        // Once Google is really connected, "you" is the signed-in person.
+        const real: Partial<Person> = google.connected
+          ? {
+              ...(google.name ? { name: google.name, firstName: google.firstName || google.name.split(" ")[0] } : {}),
+              ...(google.email ? { email: google.email } : {}),
+            }
+          : {};
+        return { ...p, ...real, ...mePatch };
+      }),
+    [basePeople, mePatch, google.connected, google.name, google.firstName, google.email],
   );
   const me = people.find((p) => p.isMe) ?? people[0];
 
@@ -212,8 +225,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         e.personId !== meId ||
         e.source === "fiutran" ||
         e.source === "timeoff" ||
-        // Real Google replaces the sample Google events on your row.
-        (connections[e.source] && !(e.source === "google" && google.connected)),
+        // With your real Google Calendar connected, none of your sample events are shown.
+        (connections[e.source] && !google.connected),
     );
     const fromGoogle = google.connected ? googleEvents : [];
     const fromMeetings: BusyEvent[] = meetings.flatMap((m) =>

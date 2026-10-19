@@ -32,7 +32,8 @@ When the three env vars in `.env.example` are set, **My profile → Google Calen
 - **Write:** **Send invite** adds the meeting to your Google Calendar (`sendUpdates=none`). Sample teammates are named in the description only, never added as guests, so Google emails no one.
 - Delete or move the event in Google and your row updates on the next sync.
 - Tokens are kept in an encrypted, httpOnly cookie (AES-256-GCM, keyed by `AUTH_SECRET`). **Disconnect** revokes access at Google.
-- Outlook and the other four teammates stay sample data.
+- Your row then shows only your real data: your name comes from your Google account, and none of the sample events for "you" are shown.
+- Outlook and the other four teammates (Aarti, Lena, Arjun, Maya) stay sample data, labelled as such on the Team screen.
 
 Setup (about 10 minutes):
 

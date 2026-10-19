@@ -221,6 +221,9 @@ function CalendarsCard() {
                     "Not connected"
                   )}
                 </p>
+                {r.id === "outlook" && google.connected && (
+                  <p className="text-xs text-ink-faint">Not shown while your real Google Calendar is connected.</p>
+                )}
                 {realGoogle && (
                   <p className="text-xs text-ink-faint" aria-live="polite">
                     {google.syncing

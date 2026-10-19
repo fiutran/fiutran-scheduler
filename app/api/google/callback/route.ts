@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
       refreshToken: t.refresh_token,
       expiresAt: Date.now() + t.expires_in * 1000,
       email: payload.email ?? "Google account",
+      name: payload.name,
+      firstName: payload.given_name,
     });
     return back("connected");
   } catch (err) {

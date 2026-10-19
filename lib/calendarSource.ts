@@ -47,7 +47,14 @@ export async function getBusyEvents(
 /* Real Google Calendar for "you" (two-way). Server side: app/api/google/* */
 /* ------------------------------------------------------------------ */
 
-export type GoogleStatus = { configured: boolean; connected: boolean; email: string | null };
+export type GoogleStatus = {
+  configured: boolean;
+  connected: boolean;
+  email: string | null;
+  /** Your Google profile name, used for the "you" row. Null for sessions made before it was requested. */
+  name: string | null;
+  firstName: string | null;
+};
 
 /** Whether this deployment has Google credentials, and whether you're signed in. */
 export async function getGoogleStatus(): Promise<GoogleStatus> {
@@ -56,7 +63,7 @@ export async function getGoogleStatus(): Promise<GoogleStatus> {
     if (!res.ok) throw new Error();
     return (await res.json()) as GoogleStatus;
   } catch {
-    return { configured: false, connected: false, email: null };
+    return { configured: false, connected: false, email: null, name: null, firstName: null };
   }
 }
 

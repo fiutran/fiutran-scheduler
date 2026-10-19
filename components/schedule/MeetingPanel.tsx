@@ -6,6 +6,7 @@ import { StatusChip } from "./StatusChip";
 import { attendeeStatus } from "@/lib/availability";
 import { fmtDate, fmtDateLong, fmtRange, fmtTime, localDateIso, tzAbbr } from "@/lib/time";
 import type { Person } from "@/lib/types";
+import { showYouTag } from "@/lib/people";
 
 export function MeetingPanel({ invitedPeople }: { invitedPeople: Person[] }) {
   const { selectionStart, durationMin, viewerTz, busyIndex, title, sendInvite, clearDraft } = useApp();
@@ -49,7 +50,7 @@ export function MeetingPanel({ invitedPeople }: { invitedPeople: Person[] }) {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">
                     {p.name}
-                    {p.isMe && <span className="font-normal text-ink-faint"> (you)</span>}
+                    {showYouTag(p) && <span className="font-normal text-ink-faint"> (you)</span>}
                   </p>
                   <p className="font-mono text-xs text-ink-soft">
                     {fmtTime(start, p.timeZone)}–{fmtTime(end, p.timeZone)} {tzAbbr(p.timeZone, start)}

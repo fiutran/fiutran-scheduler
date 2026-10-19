@@ -5,6 +5,7 @@ import { useApp } from "../AppProvider";
 import { busyAt, cellState, isWorking, type CellState } from "@/lib/availability";
 import { SLOT_MS, dayCells, fmtDate, fmtRange, fmtTime, localParts, minToHHMM, tzAbbr } from "@/lib/time";
 import type { Person } from "@/lib/types";
+import { showYouTag } from "@/lib/people";
 
 const CELL_CLASS: Record<CellState, string> = {
   free: "bg-white hover:bg-accent-50",
@@ -176,7 +177,7 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">
                       {p.firstName}
-                      {p.isMe && <span className="font-normal text-ink-faint"> (you)</span>}
+                      {showYouTag(p) && <span className="font-normal text-ink-faint"> (you)</span>}
                     </p>
                     <p className="truncate font-mono text-[11px] text-ink-faint">
                       {tzAbbr(p.timeZone, cells[0])} · {minToHHMM(p.workStartMin)}–{minToHHMM(p.workEndMin)}
