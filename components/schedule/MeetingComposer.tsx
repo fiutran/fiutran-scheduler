@@ -4,10 +4,9 @@ import { useEffect, useState } from "react";
 import { STANDARD_LENGTHS, useApp } from "../AppProvider";
 import { DayPicker } from "../DayPicker";
 import { Icon } from "../Icon";
-import { StatusChip } from "./StatusChip";
 import { attendeeStatus } from "@/lib/availability";
 import { showYouTag } from "@/lib/people";
-import { durationLabel, fmtDate, fmtDateLong, fmtTime, localDateIso, tzAbbr, zonedToUtc } from "@/lib/time";
+import { durationLabel, fmtDate, fmtRange, fmtTime, tzAbbr, zonedToUtc } from "@/lib/time";
 import type { Person } from "@/lib/types";
 
 const MAX_MIN = 8 * 60;
@@ -18,8 +17,8 @@ const toMinutes = (hhmm: string) => {
 };
 
 /**
- * Everything needed to set up and send a meeting, top to bottom in one panel:
- * title → who → day → time → how it lands for each attendee → Send.
+ * The top of the meeting card: title and actions, then when, then who.
+ * Each attendee's local time and status is shown on their row of the timeline below.
  */
 export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) {
   const {
@@ -44,7 +43,7 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
   const end = start === null ? null : start + durationMin * 60_000;
   const abbr = tzAbbr(viewerTz, start ?? now);
 
-  // Typed times are kept as text so a half-typed or invalid entry can show an error without being applied.
+  // Typed times are kept as text so an invalid entry can show an error without being applied.
   const [startText, setStartText] = useState("");
   const [endText, setEndText] = useState("");
   const [timeError, setTimeError] = useState("");
@@ -71,93 +70,109 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
     setDurationMin(minutes);
   }
 
-  const rows =
+  const unavailable =
     start !== null && end !== null
-      ? invitedPeople.map((p) => ({ p, status: attendeeStatus(p, busyIndex, start, end) }))
+      ? invitedPeople.filter((p) => attendeeStatus(p, busyIndex, start, end) !== "available")
       : [];
-  const conflicts = rows.filter((r) => r.status !== "available").length;
-  const viewerDate = start === null ? "" : localDateIso(start, viewerTz);
   const canSend = start !== null && invitedPeople.length > 0 && !timeError;
 
+  let summary: React.ReactNode;
+  if (timeError) summary = timeError;
+  else if (invitedPeople.length === 0) summary = "Invite at least one person.";
+  else if (start === null || end === null) summary = "Pick a suggested time, click the timeline, or type a start time.";
+  else
+    summary = (
+      <>
+        <span className="font-mono text-ink">
+          {fmtDate(start, viewerTz)} · {fmtRange(start, end, viewerTz)}
+        </span>{" "}
+        · {durationLabel(durationMin)} ·{" "}
+        {unavailable.length === 0 ? (
+          <span className="font-medium text-accent-700">Everyone is available</span>
+        ) : (
+          <span className="text-busy-700">
+            {invitedPeople.length - unavailable.length} of {invitedPeople.length} available. Not available:{" "}
+            {unavailable.map((p) => p.firstName).join(", ")}
+          </span>
+        )}
+      </>
+    );
+
   return (
-    <section className="card p-4 sm:p-5" aria-labelledby="mtg-title">
-      <h2 id="mtg-title" className="text-base font-semibold">
+    <div className="p-4 sm:p-5">
+      <h2 id="mtg-title" className="sr-only">
         New meeting
       </h2>
+      <div className="space-y-4">
 
-      <div className="mt-4 space-y-5">
-        <div>
-          <label htmlFor="mtg-title-input" className="label mb-2 block">
+      {/* Title + actions */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex-1">
+          <label htmlFor="mtg-title-input" className="label mb-1.5 block">
             Meeting title
           </label>
           <input
             id="mtg-title-input"
-            className="field"
+            className="field text-base"
             placeholder="e.g. Q4 planning sync"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
         </div>
-
-        <div role="group" aria-labelledby="who-label">
-          <p id="who-label" className="label mb-2">
-            Who&apos;s invited
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {people.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className="chip"
-                aria-pressed={invited.includes(p.id)}
-                onClick={() => toggleInvite(p.id)}
-              >
-                {p.firstName}
-                {showYouTag(p) && " (you)"}
-                <span className="font-mono text-xs opacity-80">{tzAbbr(p.timeZone, now)}</span>
-              </button>
-            ))}
-          </div>
+        <div className="flex gap-2">
+          <button type="button" className="btn-primary flex-1 sm:flex-none sm:px-6" onClick={sendInvite} disabled={!canSend}>
+            <Icon name="send" className="h-4 w-4" />
+            Send invite
+          </button>
+          <button type="button" className="btn-secondary" onClick={clearDraft}>
+            Clear
+          </button>
         </div>
+      </div>
 
+      {/* When */}
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
         <DayPicker />
-
         <div role="group" aria-labelledby="time-label">
           <p id="time-label" className="label mb-2">
             Time <span className="font-normal text-ink-faint">({abbr})</span>
           </p>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="mtg-start" className="mb-1 block text-xs text-ink-faint">
-                Start
-              </label>
-              <input
-                id="mtg-start"
-                type="time"
-                step={300}
-                className="field font-mono"
-                value={startText}
-                onChange={(e) => onStart(e.target.value)}
-              />
-            </div>
-            <div>
-              <label htmlFor="mtg-end" className="mb-1 block text-xs text-ink-faint">
-                End
-              </label>
-              <input
-                id="mtg-end"
-                type="time"
-                step={300}
-                className="field font-mono"
-                value={endText}
-                disabled={start === null}
-                onChange={(e) => onEnd(e.target.value)}
-                aria-invalid={!!timeError}
-                aria-describedby="time-hint"
-              />
-            </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="mtg-start" className="sr-only">
+              Start
+            </label>
+            <input
+              id="mtg-start"
+              type="time"
+              step={300}
+              className="field w-[132px] font-mono"
+              value={startText}
+              onChange={(e) => onStart(e.target.value)}
+            />
+            <span className="text-ink-faint" aria-hidden="true">
+              –
+            </span>
+            <label htmlFor="mtg-end" className="sr-only">
+              End
+            </label>
+            <input
+              id="mtg-end"
+              type="time"
+              step={300}
+              className="field w-[132px] font-mono"
+              value={endText}
+              disabled={start === null}
+              onChange={(e) => onEnd(e.target.value)}
+              aria-invalid={!!timeError}
+              aria-describedby="time-hint"
+            />
           </div>
-          <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Length">
+        </div>
+        <div role="group" aria-label="Length">
+          <p className="label mb-2" aria-hidden="true">
+            Length
+          </p>
+          <div className="flex flex-wrap gap-2">
             {STANDARD_LENGTHS.map((m) => (
               <button
                 key={m}
@@ -170,64 +185,41 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
               </button>
             ))}
           </div>
-          <p
-            id="time-hint"
-            role={timeError ? "alert" : undefined}
-            className={`mt-2 text-xs ${timeError ? "font-medium text-busy-700" : "text-ink-faint"}`}
-          >
-            {timeError ||
-              (start === null
-                ? "Type a start time, pick a suggestion, or click the grid."
-                : `${fmtDateLong(start, viewerTz)} · ${durationLabel(durationMin)}`)}
-          </p>
         </div>
-
-        {rows.length > 0 && start !== null && end !== null && (
-          <div>
-            <h3 className="text-sm font-semibold">How it lands ({rows.length})</h3>
-            <ul className="mt-1 divide-y divide-line">
-              {rows.map(({ p, status }) => {
-                const theirDate = localDateIso(start, p.timeZone);
-                return (
-                  <li key={p.id} className="flex items-center justify-between gap-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {p.name}
-                        {showYouTag(p) && <span className="font-normal text-ink-faint"> (you)</span>}
-                      </p>
-                      <p className="font-mono text-xs text-ink-soft">
-                        {fmtTime(start, p.timeZone)}–{fmtTime(end, p.timeZone)} {tzAbbr(p.timeZone, start)}
-                        {theirDate !== viewerDate && (
-                          <span className="ml-1.5 rounded bg-canvas px-1.5 py-0.5 font-sans text-ink ring-1 ring-inset ring-line">
-                            {fmtDate(start, p.timeZone)}
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                    <StatusChip status={status} />
-                  </li>
-                );
-              })}
-            </ul>
-            {conflicts > 0 && (
-              <p className="mt-1 text-xs text-busy-700">
-                {conflicts} attendee{conflicts > 1 ? "s" : ""} can&apos;t make this time. You can still send the invite.
-              </p>
-            )}
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <button type="button" className="btn-primary flex-1" onClick={sendInvite} disabled={!canSend}>
-            <Icon name="send" className="h-4 w-4" />
-            Send invite
-          </button>
-          <button type="button" className="btn-secondary" onClick={clearDraft}>
-            Clear
-          </button>
-        </div>
-        {invitedPeople.length === 0 && <p className="-mt-3 text-xs text-ink-faint">Invite at least one person.</p>}
       </div>
-    </section>
+
+      {/* Who */}
+      <div role="group" aria-labelledby="who-label">
+        <p id="who-label" className="label mb-2">
+          Who&apos;s invited
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {people.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="chip"
+              aria-pressed={invited.includes(p.id)}
+              onClick={() => toggleInvite(p.id)}
+            >
+              {p.firstName}
+              {showYouTag(p) && " (you)"}
+              <span className="font-mono text-xs opacity-80">{tzAbbr(p.timeZone, now)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <p
+        id="time-hint"
+        role={timeError ? "alert" : "status"}
+        className={`rounded-lg px-3 py-2 text-sm ${
+          timeError ? "bg-busy-50 font-medium text-busy-700" : "bg-canvas text-ink-soft"
+        }`}
+      >
+        {summary}
+      </p>
+      </div>
+    </div>
   );
 }

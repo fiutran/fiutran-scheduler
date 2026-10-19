@@ -9,7 +9,8 @@
 @tailwind utilities;
 
 :root {
-  --name-w: 176px;
+  /* Wide enough for a name, the attendee's local meeting time and a status chip. */
+  --name-w: 232px;
   --cell-w: 30px;
 }
 @media (max-width: 640px) {

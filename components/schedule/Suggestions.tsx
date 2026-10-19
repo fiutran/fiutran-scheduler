@@ -27,61 +27,65 @@ export function Suggestions({ invitedPeople }: { invitedPeople: Person[] }) {
 
   const dayName = format(parseISO(selectedDay), "EEEE");
 
+  const slots = perfect.length ? perfect : best;
   return (
-    <section className="card p-4 sm:p-5" aria-labelledby="sugg-title">
-      <h2 id="sugg-title" className="flex items-center gap-2 text-base font-semibold">
-        <Icon name="sparkle" className="h-4 w-4 text-accent-600" />
-        Suggested times
-      </h2>
-      <p className="mb-3 text-sm text-ink-faint">
-        {durationLabel(durationMin)} on {dayName}, within everyone&apos;s working hours. One click picks the time.
-      </p>
+    <div className="space-y-3 p-4 sm:px-5" aria-labelledby="sugg-title">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h3 id="sugg-title" className="flex items-center gap-2 text-sm font-semibold">
+          <Icon name="sparkle" className="h-4 w-4 text-accent-600" />
+          Suggested times
+        </h3>
+        <p className="text-xs text-ink-faint">
+          {durationLabel(durationMin)} on {dayName}, within everyone&apos;s working hours. One click picks it.
+        </p>
+      </div>
 
       {invitedPeople.length === 0 ? (
         <p className="text-sm text-ink-soft">Invite someone to get suggestions.</p>
-      ) : perfect.length > 0 ? (
-        <ul className="flex flex-wrap gap-2">
-          {perfect.map((s) => (
-            <li key={s.start}>
-              <SlotButton slot={s} total={invitedPeople.length} active={selectionStart === s.start} onPick={setSelectionStart} tz={viewerTz} />
-            </li>
-          ))}
-        </ul>
       ) : (
         <>
-          <div role="alert" className="mb-3 flex gap-2.5 rounded-lg border border-busy-300 bg-busy-50 p-3 text-sm text-busy-700">
-            <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0" />
-            <p>
-              <span className="font-semibold">No time works for everyone on {dayName}.</span> These are the closest options.
-              Consider dropping someone, a shorter meeting, or another day.
-            </p>
-          </div>
-          {best.length ? (
+          {perfect.length === 0 && (
+            <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-busy-300 bg-busy-50 px-3 py-2 text-sm text-busy-700">
+              <Icon name="alert" className="h-4 w-4 shrink-0" />
+              <span>
+                <span className="font-semibold">No time works for everyone on {dayName}.</span>{" "}
+                {slots.length ? "Closest options below." : "No close options either."}
+              </span>
+              {otherDays.length > 0 && (
+                <span className="flex flex-wrap items-center gap-2">
+                  Everyone is free on
+                  {otherDays.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className="min-h-9 rounded-full border border-busy-300 bg-white px-3 text-sm font-medium text-ink hover:bg-busy-50"
+                      onClick={() => setSelectedDay(d)}
+                    >
+                      {format(parseISO(d), "EEE d MMM")}
+                    </button>
+                  ))}
+                </span>
+              )}
+            </div>
+          )}
+          {slots.length > 0 && (
             <ul className="flex flex-wrap gap-2">
-              {best.map((s) => (
+              {slots.map((s) => (
                 <li key={s.start}>
-                  <SlotButton slot={s} total={invitedPeople.length} active={selectionStart === s.start} onPick={setSelectionStart} tz={viewerTz} />
+                  <SlotButton
+                    slot={s}
+                    total={invitedPeople.length}
+                    active={selectionStart === s.start}
+                    onPick={setSelectionStart}
+                    tz={viewerTz}
+                  />
                 </li>
               ))}
             </ul>
-          ) : (
-            <p className="text-sm text-ink-soft">No close options either on this day.</p>
-          )}
-          {otherDays.length > 0 && (
-            <div className="mt-4 border-t border-line pt-3">
-              <p className="mb-2 text-sm text-ink-soft">Everyone is free on:</p>
-              <div className="flex flex-wrap gap-2">
-                {otherDays.map((d) => (
-                  <button key={d} type="button" className="chip" onClick={() => setSelectedDay(d)}>
-                    {format(parseISO(d), "EEE d MMM")}
-                  </button>
-                ))}
-              </div>
-            </div>
           )}
         </>
       )}
-    </section>
+    </div>
   );
 }
 

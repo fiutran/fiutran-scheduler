@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../AppProvider";
-import { busyAt, cellState, isWorking, type CellState } from "@/lib/availability";
-import { SLOT_MS, dayCells, fmtDate, fmtRange, fmtTime, localParts, minToHHMM, tzAbbr } from "@/lib/time";
+import { attendeeStatus, busyAt, cellState, isWorking, type AttendeeStatus, type CellState } from "@/lib/availability";
+import { SLOT_MS, dayCells, fmtDate, fmtRange, fmtTime, localDateIso, localParts, minToHHMM, tzAbbr } from "@/lib/time";
 import type { Person } from "@/lib/types";
 import { showYouTag } from "@/lib/people";
 
@@ -21,6 +21,7 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
   const scrollRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<Hover>(null);
   const [focusIdx, setFocusIdx] = useState(0);
+  const [cellW, setCellW] = useState<number | null>(null);
 
   const cells = useMemo(() => dayCells(selectedDay, viewerTz), [selectedDay, viewerTz]);
 
@@ -35,6 +36,9 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
 
   const total = invitedPeople.length;
   const durCells = durationMin / 30;
+  // Every hour labelled when there's room for "13:00", otherwise every other hour.
+  const labelEvery = cellW !== null && cellW * 2 < 40 ? 2 : 1;
+  const selEnd = selectionStart === null ? null : selectionStart + durationMin * 60_000;
   // Fractional cell position, so custom times like 15:15 highlight correctly.
   const selPos =
     selectionStart !== null && selectionStart >= cells[0] && selectionStart < cells[0] + cells.length * SLOT_MS
@@ -86,10 +90,20 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(syncLabels);
+    // Stretch cells so the whole day fits the card; below a minimum width the timeline scrolls instead.
+    const fit = () => {
+      const nameCol = el.querySelector<HTMLElement>("[data-namecol]");
+      const coarse = window.matchMedia("(pointer: coarse)").matches;
+      const avail = el.clientWidth - (nameCol?.offsetWidth ?? 0);
+      // Quarter-pixel precision fills the width without visible gaps at the right edge.
+      setCellW(Math.max(coarse ? 44 : 20, Math.floor((avail / cells.length) * 4) / 4));
+      syncLabels();
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [syncLabels, invitedPeople.length === 0]);
+  }, [syncLabels, invitedPeople.length === 0, cells.length]);
 
   const viewerAbbr = tzAbbr(viewerTz, cells[0]);
 
@@ -127,14 +141,14 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
   const hoverText = hover ? describe(hover.row, hover.idx) : null;
 
   return (
-    <section className="card p-4 sm:p-5" aria-labelledby="grid-title">
+    <div className="p-4 sm:px-5" role="region" aria-labelledby="grid-title">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 id="grid-title" className="text-base font-semibold">
+          <h3 id="grid-title" className="text-sm font-semibold">
             Availability · {fmtDate(cells[0], viewerTz)}
-          </h2>
-          <p className="text-sm text-ink-faint">
-            Times in {viewerAbbr}. Click any cell to start a {durationMin}-minute meeting there.
+          </h3>
+          <p className="text-xs text-ink-faint">
+            Times in {viewerAbbr}. Click any cell to start the meeting there.
           </p>
         </div>
         <Legend />
@@ -150,6 +164,7 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
           className="relative snap-x snap-mandatory overflow-x-auto rounded-lg border border-line [scroll-padding-left:var(--name-w)]"
           onScroll={syncLabels}
           onMouseLeave={() => setHover(null)}
+          style={cellW ? ({ "--cell-w": `${cellW}px` } as React.CSSProperties) : undefined}
         >
           <div className="relative w-max">
             {/* Hour labels */}
@@ -163,7 +178,7 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
                     className={`relative h-8 w-[var(--cell-w)] shrink-0 ${minute % 60 === 0 ? "snap-start" : ""}`}
                     aria-hidden="true"
                   >
-                    {minute % 60 === 0 && (
+                    {minute % 60 === 0 && Math.round((c - cells[0]) / 3_600_000) % labelEvery === 0 && (
                       <span data-hour-label className="absolute left-1 top-2 whitespace-nowrap font-mono text-[11px] text-ink-faint">
                         {fmtTime(c, viewerTz)}
                       </span>
@@ -178,15 +193,29 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
             {invitedPeople.map((p, r) => (
               <div key={p.id} className="flex border-b border-line">
                 <div className="sticky left-0 z-10 flex w-[var(--name-w)] shrink-0 items-center gap-2 border-r border-line bg-white px-3">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">
                       {p.firstName}
                       {showYouTag(p) && <span className="font-normal text-ink-faint"> (you)</span>}
                     </p>
                     <p className="truncate font-mono text-[11px] text-ink-faint">
-                      {tzAbbr(p.timeZone, cells[0])} · {minToHHMM(p.workStartMin)}–{minToHHMM(p.workEndMin)}
+                      {selectionStart !== null && selEnd !== null ? (
+                        // Their local time for the selected meeting, with the date if it differs from yours.
+                        <>
+                          {fmtTime(selectionStart, p.timeZone)}–{fmtTime(selEnd, p.timeZone)} {tzAbbr(p.timeZone, selectionStart)}
+                          {localDateIso(selectionStart, p.timeZone) !== localDateIso(selectionStart, viewerTz) &&
+                            ` · ${fmtDate(selectionStart, p.timeZone)}`}
+                        </>
+                      ) : (
+                        <>
+                          {tzAbbr(p.timeZone, cells[0])} · {minToHHMM(p.workStartMin)}–{minToHHMM(p.workEndMin)}
+                        </>
+                      )}
                     </p>
                   </div>
+                  {selectionStart !== null && selEnd !== null && (
+                    <RowStatus status={attendeeStatus(p, busyIndex, selectionStart, selEnd)} />
+                  )}
                 </div>
                 {cells.map((c, i) => {
                   const state = states[r][i];
@@ -265,13 +294,32 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
       <p className="mt-3 min-h-5 font-mono text-xs text-ink-soft" aria-live="polite">
         {hoverText ?? "Hover a cell for details. Keyboard: Tab to the Everyone row, then use the arrow keys."}
       </p>
-    </section>
+    </div>
   );
 }
 
 function hourBorder(c: number, tz: string): string {
   // Darker line on the hour, lighter on the half hour.
   return localParts(c + SLOT_MS, tz).minute % 60 === 0 ? "border-r border-[#c9cfd6]" : "border-r border-[#eceef1]";
+}
+
+const ROW_STATUS: Record<AttendeeStatus, [string, string, string]> = {
+  available: ["Available", "bg-accent-50 text-accent-700 ring-accent-200", "bg-accent-600"],
+  busy: ["Busy", "bg-busy-50 text-busy-700 ring-busy-300", "bg-busy-400"],
+  off: ["Off hours", "bg-canvas text-ink-soft ring-line", "bg-ink-faint"],
+};
+
+/** Each attendee's status for the selected time: a chip on wide screens, a dot on narrow ones. */
+function RowStatus({ status }: { status: AttendeeStatus }) {
+  const [label, chip, dot] = ROW_STATUS[status];
+  return (
+    <>
+      <span className={`hidden shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset sm:inline-flex ${chip}`}>
+        {label}
+      </span>
+      <span className={`h-2.5 w-2.5 shrink-0 rounded-full sm:hidden ${dot}`} role="img" aria-label={label} />
+    </>
+  );
 }
 
 function Legend() {
