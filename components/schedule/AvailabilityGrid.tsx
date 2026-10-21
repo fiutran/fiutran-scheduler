@@ -8,11 +8,12 @@ import type { Person } from "@/lib/types";
 import { showYouTag } from "@/lib/people";
 
 const CELL_CLASS: Record<CellState, string> = {
-  free: "bg-white hover:bg-accent-50",
-  busy: "bg-busy-400 hover:bg-busy-300",
+  // Same colours as the Team calendar: green working, red not reachable, grey hatched not working.
+  free: "bg-green-100 hover:bg-green-200",
+  busy: "bg-red-400 hover:bg-red-500",
   off: "hatch hover:brightness-95",
 };
-const STATE_LABEL: Record<CellState, string> = { free: "Free", busy: "Busy", off: "Outside working hours" };
+const STATE_LABEL: Record<CellState, string> = { free: "Working", busy: "Not reachable", off: "Not working" };
 
 type Hover = { row: string; idx: number } | null;
 
@@ -121,8 +122,9 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
     const state = states[r][idx];
     const local = p.timeZone === viewerTz ? "" : ` (${fmtTime(start, p.timeZone)} ${tzAbbr(p.timeZone, start)} local)`;
     let status = STATE_LABEL[state];
-    // Only your own row reveals what you're busy with; everyone else just reads "Busy".
-    if (state === "busy" && p.isMe) status = `Busy: ${busyAt(busyIndex, p.id, start, start + SLOT_MS)?.title ?? "Busy"}`;
+    // Only your own row reveals what you're busy with; everyone else just reads "Not reachable".
+    if (state === "busy" && p.isMe)
+      status = `Not reachable: ${busyAt(busyIndex, p.id, start, start + SLOT_MS)?.title ?? "busy"}`;
     return `${p.isMe ? "You" : p.name} · ${range}${local} · ${status}`;
   }
 
@@ -244,12 +246,8 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
               </div>
               {cells.map((c, i) => {
                 const n = freeCounts[i];
-                const cls =
-                  n === total
-                    ? "bg-accent-600 hover:bg-accent-700"
-                    : total > 1 && n === total - 1
-                      ? "bg-accent-200 hover:bg-accent-100"
-                      : "bg-[#e3e6ea] hover:bg-[#d6dae0]";
+                // Light blue only where everyone is free; grey everywhere else.
+                const cls = n === total ? "bg-accent-200 hover:bg-accent-100" : "bg-[#e3e6ea] hover:bg-[#d6dae0]";
                 const text = describe("everyone", i);
                 return (
                   <button
@@ -283,7 +281,7 @@ export function AvailabilityGrid({ invitedPeople }: { invitedPeople: Person[] })
             {nowIdx >= 0 && (
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute bottom-0 top-8 z-[4] w-0.5 bg-ink/70"
+                className="pointer-events-none absolute bottom-0 top-8 z-[4] w-0.5 bg-red-600"
                 style={{ left: `calc(var(--name-w) + ${(now - cells[0]) / SLOT_MS} * var(--cell-w))` }}
               />
             )}
@@ -304,9 +302,9 @@ function hourBorder(c: number, tz: string): string {
 }
 
 const ROW_STATUS: Record<AttendeeStatus, [string, string, string]> = {
-  available: ["Available", "bg-accent-50 text-accent-700 ring-accent-200", "bg-accent-600"],
-  busy: ["Busy", "bg-busy-50 text-busy-700 ring-busy-300", "bg-busy-400"],
-  off: ["Off hours", "bg-canvas text-ink-soft ring-line", "bg-ink-faint"],
+  available: ["Available", "bg-green-50 text-green-800 ring-green-300", "bg-green-600"],
+  busy: ["Not reachable", "bg-red-50 text-red-800 ring-red-300", "bg-red-600"],
+  off: ["Not working", "bg-canvas text-ink-soft ring-line", "bg-ink-faint"],
 };
 
 /** Each attendee's status for the selected time: a chip on wide screens, a dot on narrow ones. */
@@ -324,11 +322,10 @@ function RowStatus({ status }: { status: AttendeeStatus }) {
 
 function Legend() {
   const items: [string, string][] = [
-    ["bg-white ring-1 ring-inset ring-line", "Free"],
-    ["bg-busy-400", "Busy"],
-    ["hatch ring-1 ring-inset ring-line", "Off hours"],
-    ["bg-accent-600", "All free"],
-    ["bg-accent-200", "All but one"],
+    ["bg-green-100 ring-1 ring-inset ring-green-300", "Working"],
+    ["bg-red-400", "Not reachable"],
+    ["hatch ring-1 ring-inset ring-line", "Not working"],
+    ["bg-accent-200", "Everyone free"],
   ];
   return (
     <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-soft">

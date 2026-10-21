@@ -104,7 +104,7 @@ function SlotButton({
 }) {
   const allFree = slot.missing.length === 0;
   const missing = slot.missing
-    .map((m) => `${m.person.firstName} (${m.status === "busy" ? "busy" : "off hours"})`)
+    .map((m) => `${m.person.firstName} (${m.status === "busy" ? "not reachable" : "not working"})`)
     .join(", ");
   return (
     <button

@@ -383,7 +383,7 @@ function TimeOffCard() {
             const e = Date.parse(b.endUtc);
             return (
               <li key={b.id} className="flex items-center gap-3 px-3 py-2">
-                <span className="h-6 w-1.5 shrink-0 rounded-full bg-busy-400" aria-hidden="true" />
+                <span className="hatch h-6 w-1.5 shrink-0 rounded-full ring-1 ring-inset ring-line" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{b.reason}</p>
                   <p className="font-mono text-xs text-ink-soft">
