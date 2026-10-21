@@ -38,8 +38,8 @@ export type Meeting = {
   startUtc: string;
   endUtc: string;
   attendeeIds: string[];
-  /** Set when the meeting was also written to your real Google Calendar. */
-  googleEventId?: string;
+  /** Set when the meeting was also written to one of your real calendars. */
+  liveEvent?: { provider: CalendarProvider; id: string };
 };
 
 export type TimeOffBlock = {

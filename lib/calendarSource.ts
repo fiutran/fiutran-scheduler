@@ -14,7 +14,7 @@
  *
  * Both functions are async on purpose so callers don't change when they hit the network.
  */
-import type { BusyEvent, Person } from "./types";
+import type { BusyEvent, CalendarProvider, Person } from "./types";
 import { MOCK_PEOPLE, buildMockEvents } from "./mockData";
 
 /** Simulated network latency so loading states are exercised in the demo. */
@@ -44,67 +44,76 @@ export async function getBusyEvents(
 }
 
 /* ------------------------------------------------------------------ */
-/* Real Google Calendar for "you" (two-way). Server side: app/api/google/* */
+/* Real calendars for "you" (two-way): Google Calendar and Outlook.    */
+/* Server side: app/api/[provider]/* and lib/server/providers.ts.      */
 /* ------------------------------------------------------------------ */
 
-export type GoogleStatus = {
+export type LiveStatus = {
+  /** False when this deployment has no credentials for the provider; it then stays simulated. */
   configured: boolean;
   connected: boolean;
   email: string | null;
-  /** Your Google profile name, used for the "you" row. Null for sessions made before it was requested. */
+  /** Your profile name, used for the "you" row. */
   name: string | null;
   firstName: string | null;
 };
 
-/** Whether this deployment has Google credentials, and whether you're signed in. */
-export async function getGoogleStatus(): Promise<GoogleStatus> {
+const OFFLINE: LiveStatus = { configured: false, connected: false, email: null, name: null, firstName: null };
+
+export async function getLiveStatus(provider: CalendarProvider): Promise<LiveStatus> {
   try {
-    const res = await fetch("/api/google/status", { cache: "no-store" });
+    const res = await fetch(`/api/${provider}/status`, { cache: "no-store" });
     if (!res.ok) throw new Error();
-    return (await res.json()) as GoogleStatus;
+    return (await res.json()) as LiveStatus;
   } catch {
-    return { configured: false, connected: false, email: null, name: null, firstName: null };
+    return OFFLINE;
   }
 }
 
-/** Full-page redirect to Google's consent screen; returns to My profile afterwards. */
-export function connectGoogle(): void {
-  window.location.href = "/api/google/connect";
+/** Full-page redirect to the provider's consent screen; returns to My profile afterwards. */
+export function connectLive(provider: CalendarProvider): void {
+  window.location.href = `/api/${provider}/connect`;
 }
 
-export async function disconnectGoogle(): Promise<void> {
-  await fetch("/api/google/disconnect", { method: "POST" });
+export async function disconnectLive(provider: CalendarProvider): Promise<void> {
+  await fetch(`/api/${provider}/disconnect`, { method: "POST" });
 }
 
-export class GoogleNotConnectedError extends Error {}
+export class LiveNotConnectedError extends Error {}
 
-/** Read: your real Google events in the range, as busy blocks on your row. */
-export async function getGoogleBusyEvents(
+/** Read: your real events in the range, as busy blocks on your row. */
+export async function getLiveBusyEvents(
+  provider: CalendarProvider,
   personId: string,
   rangeStartUtc: Date,
   rangeEndUtc: Date,
 ): Promise<BusyEvent[]> {
   const q = new URLSearchParams({ start: rangeStartUtc.toISOString(), end: rangeEndUtc.toISOString() });
-  const res = await fetch(`/api/google/events?${q}`, { cache: "no-store" });
-  if (res.status === 401) throw new GoogleNotConnectedError((await res.json()).error);
-  if (!res.ok) throw new Error("Couldn't load your Google Calendar");
+  const res = await fetch(`/api/${provider}/events?${q}`, { cache: "no-store" });
+  if (res.status === 401) throw new LiveNotConnectedError((await res.json()).error);
+  if (!res.ok) throw new Error(`Couldn't load your ${provider === "google" ? "Google Calendar" : "Outlook calendar"}`);
   const { events } = (await res.json()) as { events: { id: string; startUtc: string; endUtc: string; title: string }[] };
-  return events.map((e) => ({ id: `google-${e.id}`, personId, startUtc: e.startUtc, endUtc: e.endUtc, title: e.title, source: "google" }));
+  return events.map((e) => ({
+    id: `${provider}-${e.id}`,
+    personId,
+    startUtc: e.startUtc,
+    endUtc: e.endUtc,
+    title: e.title,
+    source: provider,
+  }));
 }
 
-/** Write: creates the meeting in your Google Calendar. Returns its Google id and link. */
-export async function createGoogleEvent(meeting: {
-  title: string;
-  startUtc: string;
-  endUtc: string;
-  attendeeNames: string[];
-}): Promise<{ id: string; htmlLink?: string }> {
-  const res = await fetch("/api/google/events", {
+/** Write: creates the meeting in your calendar. Returns the provider's event id and a link to it. */
+export async function createLiveEvent(
+  provider: CalendarProvider,
+  meeting: { title: string; startUtc: string; endUtc: string; attendeeNames: string[] },
+): Promise<{ id: string; link?: string }> {
+  const res = await fetch(`/api/${provider}/events`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(meeting),
   });
-  if (res.status === 401) throw new GoogleNotConnectedError((await res.json()).error);
-  if (!res.ok) throw new Error("Couldn't add the meeting to Google Calendar");
-  return (await res.json()) as { id: string; htmlLink?: string };
+  if (res.status === 401) throw new LiveNotConnectedError((await res.json()).error);
+  if (!res.ok) throw new Error(`Couldn't add the meeting to your ${provider === "google" ? "Google Calendar" : "Outlook calendar"}`);
+  return (await res.json()) as { id: string; link?: string };
 }

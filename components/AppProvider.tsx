@@ -2,31 +2,50 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
-  GoogleNotConnectedError,
-  connectGoogle,
-  createGoogleEvent,
-  disconnectGoogle,
+  LiveNotConnectedError,
+  connectLive,
+  createLiveEvent,
+  disconnectLive,
   getBusyEvents,
-  getGoogleBusyEvents,
-  getGoogleStatus,
+  getLiveBusyEvents,
+  getLiveStatus,
   getPeople,
-  type GoogleStatus,
+  type LiveStatus,
 } from "@/lib/calendarSource";
 import { buildBusyIndex, type BusyIndex } from "@/lib/availability";
 import { localDateIso } from "@/lib/time";
 import type { BusyEvent, CalendarProvider, Meeting, Person, TimeOffBlock } from "@/lib/types";
 import { addDaysIso, getDemoWeek } from "@/lib/week";
 
-/** Outcome of writing a sent meeting to your real Google Calendar (absent when Google isn't really connected). */
-export type GoogleWrite = { state: "saving" } | { state: "saved"; link?: string } | { state: "failed"; error: string };
-type Confirmation = { meeting: Meeting; viewerTz: string; google?: GoogleWrite } | null;
+export const PROVIDERS: CalendarProvider[] = ["google", "outlook"];
+export const PROVIDER_LABEL: Record<CalendarProvider, string> = { google: "Google Calendar", outlook: "Outlook" };
 
-/** Real Google Calendar connection for "you". `configured` is false when the deployment has no credentials. */
-export type GoogleSync = GoogleStatus & {
+/** Outcome of writing a sent meeting to one of your real calendars (absent when none is really connected). */
+export type LiveWrite = { provider: CalendarProvider } & (
+  | { state: "saving" }
+  | { state: "saved"; link?: string }
+  | { state: "failed"; error: string }
+);
+type Confirmation = { meeting: Meeting; viewerTz: string; live?: LiveWrite } | null;
+
+/** A real calendar connection for "you". `configured` is false when the deployment has no credentials for it. */
+export type LiveSync = LiveStatus & {
   lastSynced: number | null;
   syncing: boolean;
   error: string | null;
 };
+
+const EMPTY_SYNC: LiveSync = {
+  configured: false,
+  connected: false,
+  email: null,
+  name: null,
+  firstName: null,
+  lastSynced: null,
+  syncing: false,
+  error: null,
+};
+const SEND_TO_KEY = "fiutran.sendTo";
 
 type AppState = {
   ready: boolean;
@@ -47,8 +66,13 @@ type AppState = {
   updateMe: (patch: Partial<Pick<Person, "timeZone" | "workStartMin" | "workEndMin" | "workDays">>) => void;
   connections: Record<CalendarProvider, boolean>;
   setConnection: (p: CalendarProvider, on: boolean) => void;
-  google: GoogleSync;
-  syncGoogle: () => void;
+  live: Record<CalendarProvider, LiveSync>;
+  /** True when at least one real calendar is connected. */
+  anyLive: boolean;
+  syncLive: () => void;
+  /** Which real calendar Send invite writes to (null when none is connected). */
+  sendTarget: CalendarProvider | null;
+  setSendTo: (p: CalendarProvider) => void;
   timeOff: TimeOffBlock[];
   addTimeOff: (b: Omit<TimeOffBlock, "id">) => void;
   removeTimeOff: (id: string) => void;
@@ -98,17 +122,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
   const [timeOff, setTimeOff] = useState<TimeOffBlock[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [google, setGoogle] = useState<GoogleSync>({
-    configured: false,
-    connected: false,
-    email: null,
-    name: null,
-    firstName: null,
-    lastSynced: null,
-    syncing: false,
-    error: null,
-  });
-  const [googleEvents, setGoogleEvents] = useState<BusyEvent[]>([]);
+  const [live, setLive] = useState<Record<CalendarProvider, LiveSync>>({ google: EMPTY_SYNC, outlook: EMPTY_SYNC });
+  const [liveEvents, setLiveEvents] = useState<Record<CalendarProvider, BusyEvent[]>>({ google: [], outlook: [] });
+  const [sendTo, setSendToState] = useState<CalendarProvider | null>(null);
   const range = useRef<{ from: Date; to: Date } | null>(null);
 
   const [invited, setInvited] = useState<string[]>([]);
@@ -133,13 +149,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const from = new Date(`${addDaysIso(week[0], -1)}T00:00:00Z`);
       const to = new Date(`${addDaysIso(week[4], 2)}T00:00:00Z`);
       range.current = { from, to };
-      const [lists, status] = await Promise.all([
+      const [lists, statuses] = await Promise.all([
         Promise.all(people.map((p) => getBusyEvents(p.id, from, to))),
-        getGoogleStatus(),
+        Promise.all(PROVIDERS.map((p) => getLiveStatus(p))),
       ]);
       if (cancelled) return;
-      setGoogle((g) => ({ ...g, ...status }));
-      if (status.connected) setConnections((c) => ({ ...c, google: true }));
+      setLive((cur) => {
+        const next = { ...cur };
+        PROVIDERS.forEach((p, i) => (next[p] = { ...cur[p], ...statuses[i] }));
+        return next;
+      });
+      // A calendar set up for real shows its true state; only unconfigured ones keep their sample toggle.
+      PROVIDERS.forEach((p, i) => statuses[i].configured && setConnections((c) => ({ ...c, [p]: statuses[i].connected })));
+      try {
+        const saved = localStorage.getItem(SEND_TO_KEY);
+        if (saved === "google" || saved === "outlook") setSendToState(saved);
+      } catch {
+        // Storage can be unavailable (private mode); the default target is used instead.
+      }
       setBasePeople(people);
       setSourceEvents(lists.flat());
       setInvited(people.filter((p) => p.id !== "maya").map((p) => p.id));
@@ -155,68 +182,89 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const meId = basePeople.find((p) => p.isMe)?.id;
 
-  /** Pulls your real Google events for the week. Runs on load, on tab focus, and after sending an invite. */
-  const syncGoogle = useCallback(async () => {
-    if (!range.current || !meId) return;
-    setGoogle((g) => ({ ...g, syncing: true }));
-    try {
-      const list = await getGoogleBusyEvents(meId, range.current.from, range.current.to);
-      setGoogleEvents(list);
-      setGoogle((g) => ({ ...g, syncing: false, error: null, lastSynced: Date.now() }));
-    } catch (err) {
-      if (err instanceof GoogleNotConnectedError) {
-        setGoogleEvents([]);
-        setConnections((c) => ({ ...c, google: false }));
-        setGoogle((g) => ({ ...g, connected: false, email: null, name: null, firstName: null, syncing: false, error: err.message }));
-      } else {
-        setGoogle((g) => ({ ...g, syncing: false, error: (err as Error).message }));
+  const forget = useCallback((p: CalendarProvider, error: string | null) => {
+    setLiveEvents((cur) => ({ ...cur, [p]: [] }));
+    setConnections((c) => ({ ...c, [p]: false }));
+    setLive((cur) => ({ ...cur, [p]: { ...EMPTY_SYNC, configured: cur[p].configured, error } }));
+  }, []);
+
+  /** Pulls your real events for the week from one calendar. */
+  const syncOne = useCallback(
+    async (p: CalendarProvider) => {
+      if (!range.current || !meId) return;
+      setLive((cur) => ({ ...cur, [p]: { ...cur[p], syncing: true } }));
+      try {
+        const list = await getLiveBusyEvents(p, meId, range.current.from, range.current.to);
+        setLiveEvents((cur) => ({ ...cur, [p]: list }));
+        setLive((cur) => ({ ...cur, [p]: { ...cur[p], syncing: false, error: null, lastSynced: Date.now() } }));
+      } catch (err) {
+        if (err instanceof LiveNotConnectedError) forget(p, err.message);
+        else setLive((cur) => ({ ...cur, [p]: { ...cur[p], syncing: false, error: (err as Error).message } }));
       }
-    }
-  }, [meId]);
+    },
+    [meId, forget],
+  );
+
+  const connectedKey = PROVIDERS.filter((p) => live[p].connected).join(",");
+  /** Runs on load, on tab focus, after sending an invite, and from "Sync now". */
+  const syncLive = useCallback(() => {
+    PROVIDERS.forEach((p) => live[p].connected && syncOne(p));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectedKey, syncOne]);
 
   useEffect(() => {
-    if (!ready || !google.connected) return;
-    syncGoogle();
-    // Two-way check: edit your Google Calendar in another tab, come back, and the grid updates.
-    const onVisible = () => document.visibilityState === "visible" && syncGoogle();
+    if (!ready || !connectedKey) return;
+    syncLive();
+    // Two-way check: edit your calendar in another tab, come back, and the grid updates.
+    const onVisible = () => document.visibilityState === "visible" && syncLive();
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [ready, google.connected, syncGoogle]);
+  }, [ready, connectedKey, syncLive]);
 
   const setConnection = useCallback(
     (p: CalendarProvider, on: boolean) => {
-      // Outlook is always simulated; Google is real when this deployment has credentials.
-      if (p !== "google" || !google.configured) {
+      // Without credentials on this deployment, a calendar stays simulated (sample data).
+      if (!live[p].configured) {
         setConnections((cur) => ({ ...cur, [p]: on }));
         return;
       }
-      if (on) {
-        connectGoogle();
-        return;
-      }
-      disconnectGoogle().finally(() => {
-        setGoogleEvents([]);
-        setConnections((cur) => ({ ...cur, google: false }));
-        setGoogle((g) => ({ ...g, connected: false, email: null, name: null, firstName: null, lastSynced: null, error: null }));
-      });
+      if (on) connectLive(p);
+      else disconnectLive(p).finally(() => forget(p, null));
     },
-    [google.configured],
+    [live, forget],
   );
+
+  const anyLive = PROVIDERS.some((p) => live[p].connected);
+  const sendTarget: CalendarProvider | null =
+    sendTo && live[sendTo].connected ? sendTo : (PROVIDERS.find((p) => live[p].connected) ?? null);
+  const setSendTo = useCallback((p: CalendarProvider) => {
+    setSendToState(p);
+    try {
+      localStorage.setItem(SEND_TO_KEY, p);
+    } catch {
+      // Not remembered across visits when storage is unavailable.
+    }
+  }, []);
+
+  // "You" takes the name and email of the first connected real calendar that provides them.
+  const liveIdentity = PROVIDERS.map((p) => live[p]).find((l) => l.connected && l.name) ?? PROVIDERS.map((p) => live[p]).find((l) => l.connected);
 
   const people = useMemo(
     () =>
       basePeople.map((p) => {
         if (!p.isMe) return p;
-        // Once Google is really connected, "you" is the signed-in person.
-        const real: Partial<Person> = google.connected
+        // Once a real calendar is connected, "you" is the signed-in person.
+        const real: Partial<Person> = liveIdentity
           ? {
-              ...(google.name ? { name: google.name, firstName: google.firstName || google.name.split(" ")[0] } : {}),
-              ...(google.email ? { email: google.email } : {}),
+              ...(liveIdentity.name
+                ? { name: liveIdentity.name, firstName: liveIdentity.firstName || liveIdentity.name.split(" ")[0] }
+                : {}),
+              ...(liveIdentity.email ? { email: liveIdentity.email } : {}),
             }
           : {};
         return { ...p, ...real, ...mePatch };
       }),
-    [basePeople, mePatch, google.connected, google.name, google.firstName, google.email],
+    [basePeople, mePatch, liveIdentity?.name, liveIdentity?.firstName, liveIdentity?.email],
   );
   const me = people.find((p) => p.isMe) ?? people[0];
 
@@ -228,13 +276,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         e.personId !== meId ||
         e.source === "fiutran" ||
         e.source === "timeoff" ||
-        // With your real Google Calendar connected, none of your sample events are shown.
-        (connections[e.source] && !google.connected),
+        // With a real calendar connected, none of your sample events are shown.
+        (connections[e.source] && !anyLive),
     );
-    const fromGoogle = google.connected ? googleEvents : [];
+    const fromLive = PROVIDERS.flatMap((p) => (live[p].connected ? liveEvents[p] : []));
     const fromMeetings: BusyEvent[] = meetings.flatMap((m) =>
-      // Once a meeting is in your Google Calendar, your row shows Google's copy, so deleting it there frees the slot.
-      m.attendeeIds.filter((pid) => !(m.googleEventId && google.connected && pid === meId)).map((pid) => ({
+      // Once a meeting is in your real calendar, your row shows that copy, so deleting it there frees the slot.
+      m.attendeeIds.filter((pid) => !(m.liveEvent && live[m.liveEvent.provider].connected && pid === meId)).map((pid) => ({
         id: `${m.id}-${pid}`,
         personId: pid,
         startUtc: m.startUtc,
@@ -253,8 +301,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           source: "timeoff" as const,
         }))
       : [];
-    return [...fromCalendars, ...fromGoogle, ...fromMeetings, ...fromTimeOff];
-  }, [sourceEvents, meetings, timeOff, connections, me?.id, google.connected, googleEvents]);
+    return [...fromCalendars, ...fromLive, ...fromMeetings, ...fromTimeOff];
+  }, [sourceEvents, meetings, timeOff, connections, me?.id, anyLive, live, liveEvents]);
 
   const busyIndex = useMemo(() => buildBusyIndex(events), [events]);
 
@@ -292,27 +340,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     resetCustomLength();
 
     const meInvited = people.some((p) => p.isMe && invited.includes(p.id));
-    if (!google.connected || !meInvited) {
+    const target = sendTarget;
+    if (!target || !meInvited) {
       setConfirmation({ meeting, viewerTz });
       return;
     }
-    // Two-way: write the meeting to your real Google Calendar.
-    setConfirmation({ meeting, viewerTz, google: { state: "saving" } });
-    const update = (g: GoogleWrite) =>
-      setConfirmation((c) => (c && c.meeting.id === meeting.id ? { ...c, google: g } : c));
-    createGoogleEvent({
+    // Two-way: write the meeting to the chosen real calendar.
+    setConfirmation({ meeting, viewerTz, live: { provider: target, state: "saving" } });
+    const update = (w: LiveWrite) => setConfirmation((c) => (c && c.meeting.id === meeting.id ? { ...c, live: w } : c));
+    createLiveEvent(target, {
       title: meeting.title,
       startUtc: meeting.startUtc,
       endUtc: meeting.endUtc,
       attendeeNames: people.filter((p) => meeting.attendeeIds.includes(p.id)).map((p) => p.name),
     })
-      .then(async ({ id, htmlLink }) => {
-        await syncGoogle();
-        setMeetings((cur) => cur.map((m) => (m.id === meeting.id ? { ...m, googleEventId: id } : m)));
-        update({ state: "saved", link: htmlLink });
+      .then(async ({ id, link }) => {
+        await syncOne(target);
+        setMeetings((cur) => cur.map((m) => (m.id === meeting.id ? { ...m, liveEvent: { provider: target, id } } : m)));
+        update({ provider: target, state: "saved", link });
       })
-      .catch((err: Error) => update({ state: "failed", error: err.message }));
-  }, [selectionStart, invited, title, durationMin, people, viewerTz, google.connected, syncGoogle, resetCustomLength]);
+      .catch((err: Error) => update({ provider: target, state: "failed", error: err.message }));
+  }, [selectionStart, invited, title, durationMin, people, viewerTz, sendTarget, syncOne, resetCustomLength]);
 
   const value: AppState = {
     ready,
@@ -329,8 +377,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateMe: (patch) => setMePatch((cur) => ({ ...cur, ...patch })),
     connections,
     setConnection,
-    google,
-    syncGoogle,
+    live,
+    anyLive,
+    syncLive,
+    sendTarget,
+    setSendTo,
     timeOff,
     addTimeOff: (b) => setTimeOff((cur) => [...cur, { ...b, id: newId("off") }].sort((a, z) => a.startUtc.localeCompare(z.startUtc))),
     removeTimeOff: (id) => setTimeOff((cur) => cur.filter((b) => b.id !== id)),

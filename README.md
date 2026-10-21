@@ -24,28 +24,36 @@ Stack: Next.js (App Router), TypeScript, Tailwind CSS, `date-fns-tz` for IANA ti
 
 All event times are stored as UTC and converted only for display.
 
-## Real Google Calendar (two-way, optional)
+## Real calendars: Google and Outlook (two-way, optional)
 
-When the three env vars in `.env.example` are set, **My profile → Google Calendar → Connect** signs in with Google for real:
+With the env vars in `.env.example` set, **My profile → Connect** signs in for real (each provider is independent):
 
-- **Read:** your timed events from your primary calendar show as busy on your row (titles visible only to you). All-day events, events marked "Free" and events you declined are ignored. Re-syncs when you return to the tab, or with **Sync now**.
-- **Write:** **Send invite** adds the meeting to your Google Calendar (`sendUpdates=none`). Sample teammates are named in the description only, never added as guests, so Google emails no one.
-- Delete or move the event in Google and your row updates on the next sync.
-- Tokens are kept in an encrypted, httpOnly cookie (AES-256-GCM, keyed by `AUTH_SECRET`). **Disconnect** revokes access at Google.
-- Your row then shows only your real data: your name comes from your Google account, and none of the sample events for "you" are shown.
-- Outlook and the other four teammates (Aarti, Lena, Arjun, Maya) stay sample data, labelled as such on the Team screen.
+- **Read:** your timed events show as busy on your row (titles visible only to you). All-day, "free" and declined events are ignored. Re-syncs when you return to the tab, or with **Sync now**.
+- **Write:** **Send invite** adds the meeting to your calendar. With both connected, choose **Add to: Google Calendar / Outlook** (remembered). Teammates are named in the description only, never added as guests, so nobody is emailed.
+- Delete or move the event in your calendar and your row updates on the next sync.
+- Your row shows only real data once any real calendar is connected; your name comes from that account.
+- Tokens are kept in encrypted, httpOnly cookies (AES-256-GCM, keyed by `AUTH_SECRET`). **Disconnect** forgets them (and revokes at Google).
+- The other teammates stay sample data, labelled as such on the Team screen.
 
-Setup (about 10 minutes):
+Code: `lib/server/providers.ts` (one adapter per provider), `app/api/[provider]/*` (connect, callback, status, events, disconnect), client calls in `lib/calendarSource.ts`.
+
+### Google setup
 
 1. [Google Cloud console](https://console.cloud.google.com/): create a project and enable the **Google Calendar API**.
-2. **OAuth consent screen** (Google Auth Platform → Branding / Audience): user type **External**, leave it in **Testing**, and add your Gmail address under **Test users**.
-3. **Data access**: add the scope `https://www.googleapis.com/auth/calendar.events`.
-4. **Clients → Create client → Web application**. Authorized redirect URIs, one per site you'll test on:
-   - `http://localhost:3000/api/google/callback`
-   - `https://<your-vercel-url>/api/google/callback`
-5. Put the client ID and secret, plus a random `AUTH_SECRET`, in `.env.local` (local) or in Vercel's Environment Variables, then redeploy.
+2. **Google Auth Platform**: Branding (app name, emails), Audience **External** in **Testing** with your Gmail under **Test users**, Data access scope `https://www.googleapis.com/auth/calendar.events`.
+3. **Clients → Create client → Web application**, redirect URI `https://<your-site>/api/google/callback` (and `http://localhost:3000/api/google/callback` for local).
+4. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_SECRET`, then redeploy.
 
-While the app is in Testing mode Google shows a "Google hasn't verified this app" warning (choose Continue), only listed test users can sign in, and the connection expires after 7 days.
+### Outlook setup (Microsoft Entra)
+
+1. [Azure portal](https://portal.azure.com/) → **Microsoft Entra ID → App registrations → New registration**.
+   - Supported account types: **Accounts in any organizational directory and personal Microsoft accounts**.
+   - Redirect URI: platform **Web**, `https://<your-site>/api/outlook/callback`.
+2. **API permissions → Add → Microsoft Graph → Delegated**: `Calendars.ReadWrite`, `User.Read`, `offline_access`, `openid`, `profile`, `email`.
+3. **Certificates & secrets → New client secret**; copy the **Value** (shown once).
+4. Set `MICROSOFT_CLIENT_ID` (the Application (client) ID) and `MICROSOFT_CLIENT_SECRET`, then redeploy. `AUTH_SECRET` is shared with Google.
+
+Personal accounts (outlook.com, hotmail, live) can connect straight away. A work or school account may need its IT admin to approve the app once.
 
 ## Connecting real calendars later
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { STANDARD_LENGTHS, useApp } from "../AppProvider";
+import { PROVIDERS, PROVIDER_LABEL, STANDARD_LENGTHS, useApp } from "../AppProvider";
 import { DayPicker } from "../DayPicker";
 import { Icon } from "../Icon";
 import { attendeeStatus } from "@/lib/availability";
@@ -37,7 +37,12 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
     sendInvite,
     clearDraft,
     now,
+    live,
+    sendTarget,
+    setSendTo,
   } = useApp();
+  const liveConnected = PROVIDERS.filter((p) => live[p].connected);
+  const meInvited = invitedPeople.some((p) => p.isMe);
 
   const start = selectionStart;
   const end = start === null ? null : start + durationMin * 60_000;
@@ -129,6 +134,33 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
           </button>
         </div>
       </div>
+
+      {liveConnected.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-ink-soft sm:justify-end">
+          {liveConnected.length > 1 ? (
+            <div role="group" aria-label="Add to" className="flex flex-wrap items-center gap-2">
+              <span>Add to</span>
+              {liveConnected.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className="chip min-h-9 px-3"
+                  aria-pressed={sendTarget === p}
+                  onClick={() => setSendTo(p)}
+                >
+                  {PROVIDER_LABEL[p]}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span>
+              {meInvited
+                ? `Send invite also adds it to your ${PROVIDER_LABEL[liveConnected[0]]}.`
+                : "You're not invited, so nothing is added to your calendar."}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* When */}
       <div className="flex flex-wrap items-end gap-x-6 gap-y-4">

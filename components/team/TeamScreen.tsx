@@ -48,7 +48,7 @@ const STATUS = {
 };
 
 function TeamCard({ person: p }: { person: Person }) {
-  const { now, busyIndex, viewerTz, selectedDay, connections, google } = useApp();
+  const { now, busyIndex, viewerTz, selectedDay, connections, live: liveSync, anyLive } = useApp();
 
   const status = !isWorking(p, now, now + 60_000)
     ? STATUS.off
@@ -63,9 +63,10 @@ function TeamCard({ person: p }: { person: Person }) {
   const endDay = localDateIso(whEnd, viewerTz);
 
   // Your real Google Calendar replaces your sample calendars once connected.
-  const live = Boolean(p.isMe && google.connected);
+  // Your real calendars replace your sample ones once any is connected.
+  const live = Boolean(p.isMe && anyLive);
   const calendars: CalendarProvider[] = live
-    ? ["google"]
+    ? (["google", "outlook"] as const).filter((c) => liveSync[c].connected)
     : p.isMe
       ? (["outlook", "google"] as const).filter((c) => connections[c])
       : [p.calendar];

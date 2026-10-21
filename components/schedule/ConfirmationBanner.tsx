@@ -1,13 +1,13 @@
 "use client";
 
-import { useApp } from "../AppProvider";
+import { PROVIDER_LABEL, useApp } from "../AppProvider";
 import { Icon } from "../Icon";
 import { fmtDate, fmtRange } from "@/lib/time";
 
 export function ConfirmationBanner() {
   const { confirmation, dismissConfirmation, people } = useApp();
   if (!confirmation) return null;
-  const { meeting, viewerTz, google } = confirmation;
+  const { meeting, viewerTz, live } = confirmation;
   const start = Date.parse(meeting.startUtc);
   const end = Date.parse(meeting.endUtc);
   const names = people.filter((p) => meeting.attendeeIds.includes(p.id)).map((p) => (p.isMe ? "you" : p.firstName));
@@ -23,20 +23,20 @@ export function ConfirmationBanner() {
           {fmtDate(start, viewerTz)}, <span className="font-mono">{fmtRange(start, end, viewerTz)}</span> with{" "}
           {names.join(", ")}. It now shows as busy on everyone&apos;s calendar.
         </p>
-        {google?.state === "saving" && <p className="mt-1">Adding it to your Google Calendar…</p>}
-        {google?.state === "saved" && (
+        {live?.state === "saving" && <p className="mt-1">Adding it to your {PROVIDER_LABEL[live.provider]}…</p>}
+        {live?.state === "saved" && (
           <p className="mt-1">
-            Added to your Google Calendar.{" "}
-            {google.link && (
-              <a href={google.link} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">
-                Open in Google Calendar
+            Added to your {PROVIDER_LABEL[live.provider]}.{" "}
+            {live.link && (
+              <a href={live.link} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">
+                Open in {live.provider === "google" ? "Google Calendar" : "Outlook"}
               </a>
             )}
           </p>
         )}
-        {google?.state === "failed" && (
+        {live?.state === "failed" && (
           <p className="mt-1 font-medium text-busy-700">
-            Couldn&apos;t add it to your Google Calendar: {google.error}
+            Couldn&apos;t add it to your {PROVIDER_LABEL[live.provider]}: {live.error}
           </p>
         )}
       </div>

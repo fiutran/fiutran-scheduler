@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { format, parseISO } from "date-fns";
-import { useApp } from "../AppProvider";
+import { PROVIDERS, PROVIDER_LABEL, useApp } from "../AppProvider";
 import { Icon, ProviderBadge } from "../Icon";
 import { PROFILE_ZONES, fmtDate, fmtRange, fmtTime, minToHHMM, tzAbbr, zonedToUtc } from "@/lib/time";
 import type { CalendarProvider } from "@/lib/types";
@@ -143,39 +143,47 @@ function HoursCard() {
   );
 }
 
-const GOOGLE_RESULT: Record<string, { ok: boolean; text: string }> = {
-  connected: {
-    ok: true,
-    text: "Google Calendar connected. Your real events now show on your row, and meetings you send are added to your calendar.",
-  },
-  denied: { ok: false, text: "Google sign-in was cancelled. Nothing was connected." },
-  "missing-permission": {
-    ok: false,
-    text: "Google didn't grant calendar access. Connect again and leave the calendar permission ticked.",
-  },
-  error: { ok: false, text: "Couldn't connect to Google. Please try again." },
-  "not-configured": { ok: false, text: "Real Google sync isn't set up on this deployment yet, so Google stays simulated." },
-};
+const SIGN_IN: Record<CalendarProvider, string> = { google: "Google", outlook: "Microsoft" };
+
+function resultMessage(p: CalendarProvider, result: string): { ok: boolean; text: string } | null {
+  const label = PROVIDER_LABEL[p];
+  const who = SIGN_IN[p];
+  switch (result) {
+    case "connected":
+      return {
+        ok: true,
+        text: `${label} connected. Your real events now show on your row, and meetings you send can be added to it.`,
+      };
+    case "denied":
+      return { ok: false, text: `${who} sign-in was cancelled. Nothing was connected.` };
+    case "missing-permission":
+      return { ok: false, text: `${who} didn't grant calendar access. Connect again and leave the calendar permission ticked.` };
+    case "error":
+      return { ok: false, text: `Couldn't connect to ${who}. Please try again.` };
+    case "not-configured":
+      return { ok: false, text: `Real ${label} sync isn't set up on this deployment yet, so it stays simulated.` };
+    default:
+      return null;
+  }
+}
 
 function CalendarsCard() {
-  const { connections, setConnection, me, google, syncGoogle, viewerTz } = useApp();
-  const [result, setResult] = useState<string | null>(null);
+  const { connections, setConnection, me, live, anyLive, syncLive, viewerTz } = useApp();
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
-  // Read and clear ?google=… left by the sign-in redirect.
+  // Read and clear ?calendar=…&result=… left by the sign-in redirect.
   useEffect(() => {
     const url = new URL(window.location.href);
-    const status = url.searchParams.get("google");
-    if (!status) return;
-    setResult(status);
-    url.searchParams.delete("google");
+    const p = url.searchParams.get("calendar");
+    const result = url.searchParams.get("result");
+    if ((p !== "google" && p !== "outlook") || !result) return;
+    setMessage(resultMessage(p, result));
+    url.searchParams.delete("calendar");
+    url.searchParams.delete("result");
     window.history.replaceState(null, "", url.pathname + url.search);
   }, []);
 
-  const rows: { id: CalendarProvider; name: string; live: boolean }[] = [
-    { id: "outlook", name: "Outlook", live: false },
-    { id: "google", name: "Google Calendar", live: google.configured },
-  ];
-  const message = result ? GOOGLE_RESULT[result] : null;
+  const anyConfigured = PROVIDERS.some((p) => live[p].configured);
 
   return (
     <section className="card p-5" aria-labelledby="cal-title">
@@ -194,72 +202,82 @@ function CalendarsCard() {
         </p>
       )}
       <ul className="mt-3 divide-y divide-line">
-        {rows.map((r) => {
-          const on = connections[r.id];
-          const realGoogle = r.id === "google" && google.connected;
+        {(["outlook", "google"] as const).map((id) => {
+          const sync = live[id];
+          const on = connections[id];
+          const real = sync.connected;
+          const name = PROVIDER_LABEL[id];
           return (
-            <li key={r.id} className="flex items-center gap-3 py-3">
-              <ProviderBadge provider={r.id} />
+            <li key={id} className="flex flex-wrap items-center gap-3 py-3">
+              <ProviderBadge provider={id} />
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-2 font-medium">
-                  {r.name}
+                  {name}
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${
-                      r.live ? "bg-accent-50 text-accent-700 ring-accent-200" : "bg-canvas text-ink-soft ring-line"
+                      sync.configured ? "bg-accent-50 text-accent-700 ring-accent-200" : "bg-canvas text-ink-soft ring-line"
                     }`}
                   >
-                    {r.live ? "Live" : "Sample"}
+                    {sync.configured ? "Live" : "Sample"}
                   </span>
                 </p>
                 <p className="truncate text-sm text-ink-faint">
                   {on ? (
                     <>
                       <span className="text-accent-700">Connected</span> ·{" "}
-                      {realGoogle ? google.email : r.id === "outlook" ? me.email : me.email.replace("fiutran", "gmail")}
+                      {real ? sync.email : id === "outlook" ? me.email : me.email.replace("fiutran", "gmail")}
                     </>
                   ) : (
                     "Not connected"
                   )}
                 </p>
-                {r.id === "outlook" && google.connected && (
-                  <p className="text-xs text-ink-faint">Not shown while your real Google Calendar is connected.</p>
+                {!real && on && anyLive && (
+                  <p className="text-xs text-ink-faint">Not shown while a real calendar is connected.</p>
                 )}
-                {realGoogle && (
+                {real && (
                   <p className="text-xs text-ink-faint" aria-live="polite">
-                    {google.syncing
-                      ? "Syncing…"
-                      : google.error
-                        ? <span className="text-busy-700">{google.error}</span>
-                        : google.lastSynced
-                          ? `Synced at ${fmtTime(google.lastSynced, viewerTz)} ${tzAbbr(viewerTz, google.lastSynced)}`
-                          : null}
+                    {sync.syncing ? (
+                      "Syncing…"
+                    ) : sync.error ? (
+                      <span className="text-busy-700">{sync.error}</span>
+                    ) : sync.lastSynced ? (
+                      `Synced at ${fmtTime(sync.lastSynced, viewerTz)} ${tzAbbr(viewerTz, sync.lastSynced)}`
+                    ) : null}
                   </p>
                 )}
               </div>
-              {realGoogle && (
-                <button type="button" className="btn-secondary" onClick={syncGoogle} disabled={google.syncing}>
-                  Sync now
+              <div className="flex gap-2">
+                {real && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={syncLive}
+                    disabled={sync.syncing}
+                    aria-label={`Sync ${name} now`}
+                  >
+                    Sync now
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={on ? "btn-secondary" : "btn-primary"}
+                  onClick={() => setConnection(id, !on)}
+                  aria-label={`${on ? "Disconnect" : "Connect"} ${name}`}
+                >
+                  {on ? "Disconnect" : "Connect"}
                 </button>
-              )}
-              <button
-                type="button"
-                className={on ? "btn-secondary" : "btn-primary"}
-                onClick={() => setConnection(r.id, !on)}
-                aria-label={`${on ? "Disconnect" : "Connect"} ${r.name}`}
-              >
-                {on ? "Disconnect" : "Connect"}
-              </button>
+              </div>
             </li>
           );
         })}
       </ul>
       <p className="mt-2 flex gap-2 rounded-lg bg-canvas p-3 text-sm text-ink-soft">
         <Icon name="info" className="mt-0.5 h-4 w-4 shrink-0" />
-        {google.configured ? (
+        {anyConfigured ? (
           <span>
-            Outlook is simulated with sample data. Google is a real connection: Fiutran reads your events to find
-            your busy times and adds the meetings you send to your Google Calendar. Teammates are only named in the
-            event description, so Google emails no one.
+            Live calendars are real connections: Fiutran reads your events to find your busy times and adds the
+            meetings you send (you pick which calendar when both are connected). Teammates are only named in the event
+            description, so nobody is emailed. Sample calendars use made-up data.
           </span>
         ) : (
           <span>Read-only. Busy times sync automatically; nothing in your calendar is changed.</span>
