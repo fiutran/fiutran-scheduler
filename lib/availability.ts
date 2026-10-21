@@ -94,3 +94,31 @@ export function suggestSlots(
   const best = pick([...anyFree].sort((a, b) => b.freeIds.length - a.freeIds.length || a.start - b.start), false);
   return { perfect: [], best };
 }
+
+/** Team-screen categories: working (free, in hours), not reachable (busy), not working (outside hours / time off days). */
+export type Presence = "working" | "unreachable" | "off";
+const PRESENCE: Record<CellState, Presence> = { free: "working", busy: "unreachable", off: "off" };
+
+/** Someone's state at a moment, e.g. right now. */
+export function presenceAt(person: Person, index: BusyIndex, at: number): Presence {
+  if (busyAt(index, person.id, at, at + 60_000)) return "unreachable";
+  return isWorking(person, at, at + 60_000) ? "working" : "off";
+}
+
+export type PresenceSegment = { start: number; end: number; state: Presence; title?: string };
+
+/**
+ * A day (in `tz`) split into consecutive same-state segments, at 30-minute resolution.
+ * `title` is the first busy event's title in an "unreachable" segment; callers decide whether to show it.
+ */
+export function presenceSegments(person: Person, index: BusyIndex, dateIso: string, tz: string): PresenceSegment[] {
+  const out: PresenceSegment[] = [];
+  for (const c of dayCells(dateIso, tz)) {
+    const state = PRESENCE[cellState(person, index, c)];
+    const title = state === "unreachable" ? busyAt(index, person.id, c, c + SLOT_MS)?.title : undefined;
+    const last = out[out.length - 1];
+    if (last && last.state === state && last.end === c && last.title === title) last.end = c + SLOT_MS;
+    else out.push({ start: c, end: c + SLOT_MS, state, title });
+  }
+  return out;
+}
