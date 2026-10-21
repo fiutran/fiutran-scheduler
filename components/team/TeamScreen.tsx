@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useApp } from "../AppProvider";
-import { DayPicker } from "../DayPicker";
+import { DateField } from "../DateField";
 import { Icon, ProviderBadge } from "../Icon";
 import { busyAt, cellState, isWorking, type CellState } from "@/lib/availability";
 import {
@@ -20,7 +20,7 @@ import type { CalendarProvider, Person } from "@/lib/types";
 import { showYouTag } from "@/lib/people";
 
 export function TeamScreen() {
-  const { people } = useApp();
+  const { people, selectedDay, setSelectedDay, today } = useApp();
   return (
     <>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
@@ -28,7 +28,7 @@ export function TeamScreen() {
           <h1 className="text-xl font-semibold">Team</h1>
           <p className="text-sm text-ink-faint">Live local times and today&apos;s status, from each person&apos;s calendar.</p>
         </div>
-        <DayPicker id="team-day" />
+        <DateField label="Day" value={selectedDay} onChange={setSelectedDay} today={today} />
       </div>
       <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {people.map((p) => (

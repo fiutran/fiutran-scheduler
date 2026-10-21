@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { format, parseISO } from "date-fns";
 import { PROVIDERS, PROVIDER_LABEL, useApp } from "../AppProvider";
+import { DateField } from "../DateField";
 import { Icon, ProviderBadge } from "../Icon";
+import { MultiSelect } from "../MultiSelect";
 import { PROFILE_ZONES, fmtDate, fmtRange, fmtTime, minToHHMM, tzAbbr, zonedToUtc } from "@/lib/time";
 import type { CalendarProvider } from "@/lib/types";
 
@@ -17,6 +18,15 @@ const DAYS = [
   [6, "Sat"],
   [7, "Sun"],
 ] as const;
+
+/** "Mon–Fri" for a consecutive run, otherwise a list like "Mon, Wed, Fri". */
+function workDaysSummary(days: number[]): string {
+  if (days.length === 0) return "No working days";
+  const sorted = [...days].sort((a, b) => a - b);
+  const names = sorted.map((d) => DAYS[d - 1][1]);
+  const consecutive = sorted.every((d, i) => i === 0 || d === sorted[i - 1] + 1);
+  return consecutive && sorted.length > 2 ? `${names[0]}–${names[names.length - 1]}` : names.join(", ");
+}
 
 export function ProfileScreen() {
   return (
@@ -126,18 +136,14 @@ function HoursCard() {
             : "End time must be after the start time. Your previous hours are still in use."}
         </p>
 
-        <div role="group" aria-labelledby="days-label">
-          <p id="days-label" className="label mb-2">
-            Working days
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {DAYS.map(([d, label]) => (
-              <button key={d} type="button" className="chip" aria-pressed={me.workDays.includes(d)} onClick={() => toggleDay(d)}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <MultiSelect
+          label="Working days"
+          options={DAYS.map(([d, label]) => ({ value: String(d), label }))}
+          selected={me.workDays.map(String)}
+          onToggle={(v) => toggleDay(Number(v))}
+          summary={workDaysSummary(me.workDays)}
+          placeholder="No working days"
+        />
       </div>
     </section>
   );
@@ -288,8 +294,8 @@ function CalendarsCard() {
 }
 
 function TimeOffCard() {
-  const { weekDays, me, viewerTz, timeOff, addTimeOff, removeTimeOff } = useApp();
-  const [day, setDay] = useState(weekDays[0]);
+  const { selectedDay, today, me, viewerTz, timeOff, addTimeOff, removeTimeOff } = useApp();
+  const [day, setDay] = useState(selectedDay < today ? today : selectedDay);
   const [from, setFrom] = useState(14 * 60);
   const [to, setTo] = useState(19 * 60);
   const [reason, setReason] = useState("Not working");
@@ -318,18 +324,7 @@ function TimeOffCard() {
       <p className="text-sm text-ink-faint">Entered in your time zone ({tzAbbr(me.timeZone, Date.now())}). Blocks show as busy in the grid.</p>
 
       <form onSubmit={add} className="mt-4 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[1.2fr_1fr_1fr_2fr_auto]" noValidate>
-        <div>
-          <label htmlFor="off-day" className="label mb-2 block">
-            Day
-          </label>
-          <select id="off-day" className="field" value={day} onChange={(e) => setDay(e.target.value)}>
-            {weekDays.map((d) => (
-              <option key={d} value={d}>
-                {format(parseISO(d), "EEE d MMM")}
-              </option>
-            ))}
-          </select>
-        </div>
+        <DateField label="Day" value={day} onChange={setDay} min={today} today={today} />
         <div>
           <label htmlFor="off-from" className="label mb-2 block">
             From
@@ -380,7 +375,7 @@ function TimeOffCard() {
 
       <h3 className="mt-6 text-sm font-semibold">Your blocks</h3>
       {timeOff.length === 0 ? (
-        <p className="mt-1 text-sm text-ink-faint">No time off this week.</p>
+        <p className="mt-1 text-sm text-ink-faint">No time off yet.</p>
       ) : (
         <ul className="mt-2 divide-y divide-line rounded-lg border border-line">
           {timeOff.map((b) => {

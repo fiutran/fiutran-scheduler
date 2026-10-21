@@ -8,7 +8,7 @@
  */
 import type { BusyEvent, CalendarProvider, Person } from "./types";
 import { zonedToUtc } from "./time";
-import { getDemoWeek } from "./week";
+import { addDaysIso, mondayOf } from "./week";
 
 const h = (hhmm: string) => {
   const [hh, mm] = hhmm.split(":").map(Number);
@@ -148,12 +148,13 @@ const SCHEDULES: Record<string, Row[]> = {
   ],
 };
 
-let cache: BusyEvent[] | null = null;
+const cache = new Map<string, BusyEvent[]>();
 
-/** Expands the weekly templates into concrete UTC events for the demo week. */
-export function buildMockEvents(): BusyEvent[] {
-  if (cache) return cache;
-  const week = getDemoWeek();
+/** Expands the weekly templates into concrete UTC events for the week starting on `mondayIso`. */
+export function buildMockEvents(mondayIso: string): BusyEvent[] {
+  const hit = cache.get(mondayIso);
+  if (hit) return hit;
+  const week = [0, 1, 2, 3, 4].map((i) => addDaysIso(mondayIso, i));
   const people = new Map(MOCK_PEOPLE.map((p) => [p.id, p]));
   const out: BusyEvent[] = [];
   for (const [personId, rows] of Object.entries(SCHEDULES)) {
@@ -162,7 +163,7 @@ export function buildMockEvents(): BusyEvent[] {
       const days = day === "all" ? [0, 1, 2, 3, 4] : [day];
       for (const d of days) {
         out.push({
-          id: `${personId}-${rowIdx}-${d}`,
+          id: `${personId}-${rowIdx}-${week[d]}`,
           personId,
           startUtc: new Date(zonedToUtc(week[d], h(start), person.timeZone)).toISOString(),
           endUtc: new Date(zonedToUtc(week[d], h(end), person.timeZone)).toISOString(),
@@ -172,6 +173,18 @@ export function buildMockEvents(): BusyEvent[] {
       }
     });
   }
-  cache = out;
+  cache.set(mondayIso, out);
+  return out;
+}
+
+/** Sample events for every week overlapping [fromMs, toMs). */
+export function mockEventsBetween(fromMs: number, toMs: number): BusyEvent[] {
+  const out: BusyEvent[] = [];
+  // Step a day back so a range starting mid-week still includes that week.
+  let monday = mondayOf(new Date(fromMs - 864e5).toISOString().slice(0, 10));
+  while (Date.parse(`${monday}T00:00:00Z`) - 2 * 864e5 < toMs) {
+    out.push(...buildMockEvents(monday));
+    monday = addDaysIso(monday, 7);
+  }
   return out;
 }

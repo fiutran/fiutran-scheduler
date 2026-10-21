@@ -15,7 +15,7 @@
  * Both functions are async on purpose so callers don't change when they hit the network.
  */
 import type { BusyEvent, CalendarProvider, Person } from "./types";
-import { MOCK_PEOPLE, buildMockEvents } from "./mockData";
+import { MOCK_PEOPLE, mockEventsBetween } from "./mockData";
 
 /** Simulated network latency so loading states are exercised in the demo. */
 const LATENCY_MS = 250;
@@ -38,7 +38,7 @@ export async function getBusyEvents(
   await wait(LATENCY_MS);
   const from = rangeStartUtc.getTime();
   const to = rangeEndUtc.getTime();
-  return buildMockEvents().filter(
+  return mockEventsBetween(from, to).filter(
     (e) => e.personId === personId && Date.parse(e.startUtc) < to && Date.parse(e.endUtc) > from,
   );
 }

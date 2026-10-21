@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { PROVIDERS, PROVIDER_LABEL, STANDARD_LENGTHS, useApp } from "../AppProvider";
-import { DayPicker } from "../DayPicker";
+import { DateField } from "../DateField";
+import { MultiSelect } from "../MultiSelect";
+import { TimeField } from "../TimeField";
 import { Icon } from "../Icon";
 import { attendeeStatus } from "@/lib/availability";
 import { showYouTag } from "@/lib/people";
@@ -11,10 +13,6 @@ import type { Person } from "@/lib/types";
 
 const MAX_MIN = 8 * 60;
 
-const toMinutes = (hhmm: string) => {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
-};
 
 /**
  * The top of the meeting card: title and actions, then when, then who.
@@ -31,6 +29,8 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
     viewerTz,
     selectionStart,
     setSelectionStart,
+    setSelectedDay,
+    today,
     durationMin,
     setDurationMin,
     busyIndex,
@@ -48,27 +48,18 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
   const end = start === null ? null : start + durationMin * 60_000;
   const abbr = tzAbbr(viewerTz, start ?? now);
 
-  // Typed times are kept as text so an invalid entry can show an error without being applied.
-  const [startText, setStartText] = useState("");
-  const [endText, setEndText] = useState("");
+  // An invalid end time shows an error without being applied.
   const [timeError, setTimeError] = useState("");
-  useEffect(() => {
-    setStartText(start === null ? "" : fmtTime(start, viewerTz));
-    setEndText(end === null ? "" : fmtTime(end, viewerTz));
-    setTimeError("");
-  }, [start, end, viewerTz]);
+  useEffect(() => setTimeError(""), [start, end, viewerTz]);
 
-  function onStart(value: string) {
-    setStartText(value);
-    if (!value) return;
+  function onStart(minuteOfDay: number) {
     setTimeError("");
-    setSelectionStart(zonedToUtc(selectedDay, toMinutes(value), viewerTz));
+    setSelectionStart(zonedToUtc(selectedDay, minuteOfDay, viewerTz));
   }
 
-  function onEnd(value: string) {
-    setEndText(value);
-    if (!value || start === null) return;
-    const minutes = (zonedToUtc(selectedDay, toMinutes(value), viewerTz) - start) / 60_000;
+  function onEnd(minuteOfDay: number) {
+    if (start === null) return;
+    const minutes = (zonedToUtc(selectedDay, minuteOfDay, viewerTz) - start) / 60_000;
     if (minutes <= 0) return setTimeError("End time must be after the start time.");
     if (minutes > MAX_MIN) return setTimeError("Meetings can be at most 8 hours long.");
     setTimeError("");
@@ -135,112 +126,96 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
         </div>
       </div>
 
-      {liveConnected.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 text-sm text-ink-soft sm:justify-end">
-          {liveConnected.length > 1 ? (
-            <div role="group" aria-label="Add to" className="flex flex-wrap items-center gap-2">
-              <span>Add to</span>
-              {liveConnected.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  className="chip min-h-9 px-3"
-                  aria-pressed={sendTarget === p}
-                  onClick={() => setSendTo(p)}
-                >
-                  {PROVIDER_LABEL[p]}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <span>
-              {meInvited
-                ? `Send invite also adds it to your ${PROVIDER_LABEL[liveConnected[0]]}.`
-                : "You're not invited, so nothing is added to your calendar."}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* When */}
-      <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
-        <DayPicker />
+      {/* When and who: one row of compact controls */}
+      <div className="flex flex-wrap items-end gap-x-5 gap-y-4">
+        <DateField label="Day" value={selectedDay} onChange={setSelectedDay} min={today} today={today} />
         <div role="group" aria-labelledby="time-label">
           <p id="time-label" className="label mb-2">
-            Time <span className="font-normal text-ink-faint">({abbr})</span>
+            Time <span className="font-normal text-ink-faint">({abbr}, 24-hour)</span>
           </p>
           <div className="flex items-center gap-2">
             <label htmlFor="mtg-start" className="sr-only">
               Start
             </label>
-            <input
-              id="mtg-start"
-              type="time"
-              step={300}
-              className="field w-[132px] font-mono"
-              value={startText}
-              onChange={(e) => onStart(e.target.value)}
-            />
+            <TimeField id="mtg-start" value={start === null ? "" : fmtTime(start, viewerTz)} onCommit={onStart} />
             <span className="text-ink-faint" aria-hidden="true">
               –
             </span>
             <label htmlFor="mtg-end" className="sr-only">
               End
             </label>
-            <input
+            <TimeField
               id="mtg-end"
-              type="time"
-              step={300}
-              className="field w-[132px] font-mono"
-              value={endText}
+              value={end === null ? "" : fmtTime(end, viewerTz)}
+              onCommit={onEnd}
               disabled={start === null}
-              onChange={(e) => onEnd(e.target.value)}
-              aria-invalid={!!timeError}
-              aria-describedby="time-hint"
+              invalid={!!timeError}
+              describedBy="time-hint"
             />
           </div>
         </div>
-        <div role="group" aria-label="Length">
-          <p className="label mb-2" aria-hidden="true">
+        <div>
+          <label htmlFor="mtg-length" className="label mb-2 block">
             Length
-          </p>
-          <div className="flex flex-wrap gap-2">
+          </label>
+          <select
+            id="mtg-length"
+            className="field w-auto min-w-[128px]"
+            value={durationMin}
+            onChange={(e) => setDurationMin(Number(e.target.value))}
+          >
+            {!STANDARD_LENGTHS.includes(durationMin) && (
+              <option value={durationMin}>Custom · {durationLabel(durationMin)}</option>
+            )}
             {STANDARD_LENGTHS.map((m) => (
-              <button
-                key={m}
-                type="button"
-                className="chip"
-                aria-pressed={durationMin === m}
-                onClick={() => setDurationMin(m)}
-              >
+              <option key={m} value={m}>
                 {durationLabel(m)}
-              </button>
+              </option>
             ))}
-          </div>
+          </select>
         </div>
-      </div>
-
-      {/* Who */}
-      <div role="group" aria-labelledby="who-label">
-        <p id="who-label" className="label mb-2">
-          Who&apos;s invited
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {people.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="chip"
-              aria-pressed={invited.includes(p.id)}
-              onClick={() => toggleInvite(p.id)}
+        <MultiSelect
+          label="Who's invited"
+          options={people.map((p) => ({
+            value: p.id,
+            label: `${p.firstName}${showYouTag(p) ? " (you)" : ""}`,
+            hint: tzAbbr(p.timeZone, now),
+          }))}
+          selected={invited}
+          onToggle={toggleInvite}
+          summary={
+            invitedPeople.length
+              ? `${invitedPeople.length} · ${invitedPeople.map((p) => p.firstName).join(", ")}`
+              : "No one yet"
+          }
+        />
+        {liveConnected.length > 1 && (
+          <div>
+            <label htmlFor="mtg-add-to" className="label mb-2 block">
+              Add to
+            </label>
+            <select
+              id="mtg-add-to"
+              className="field w-auto min-w-[168px]"
+              value={sendTarget ?? ""}
+              onChange={(e) => setSendTo(e.target.value as (typeof liveConnected)[number])}
             >
-              {p.firstName}
-              {showYouTag(p) && " (you)"}
-              <span className="font-mono text-xs opacity-80">{tzAbbr(p.timeZone, now)}</span>
-            </button>
-          ))}
-        </div>
+              {liveConnected.map((p) => (
+                <option key={p} value={p}>
+                  {PROVIDER_LABEL[p]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
+      {liveConnected.length === 1 && (
+        <p className="-mt-1 text-xs text-ink-faint">
+          {meInvited
+            ? `Send invite also adds it to your ${PROVIDER_LABEL[liveConnected[0]]}.`
+            : "You're not invited, so nothing is added to your calendar."}
+        </p>
+      )}
 
       <p
         id="time-hint"

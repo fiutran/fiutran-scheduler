@@ -19,3 +19,20 @@ export function getDemoWeek(now: Date = new Date()): string[] {
 export function addDaysIso(dateIso: string, days: number): string {
   return formatISO(addDays(parseISO(dateIso), days), { representation: "date" });
 }
+
+/** ISO weekday 1 (Mon) … 7 (Sun) of a calendar date. */
+export function isoWeekday(dateIso: string): number {
+  const d = parseISO(dateIso).getDay();
+  return d === 0 ? 7 : d;
+}
+
+/** Monday of the week containing a calendar date. */
+export function mondayOf(dateIso: string): string {
+  return addDaysIso(dateIso, 1 - isoWeekday(dateIso));
+}
+
+/** Monday–Friday of the week containing a calendar date. */
+export function workWeekOf(dateIso: string): string[] {
+  const monday = mondayOf(dateIso);
+  return [0, 1, 2, 3, 4].map((i) => addDaysIso(monday, i));
+}

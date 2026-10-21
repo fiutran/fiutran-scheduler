@@ -129,3 +129,25 @@ export function offsetDiffLabel(tz: string, relativeTo: string, at: number): str
   const amount = `${h ? `${h}h` : ""}${h && m ? " " : ""}${m ? `${m}m` : ""}`;
   return `${amount} ${diffMin > 0 ? "ahead" : "behind"}`;
 }
+
+/**
+ * Parses a typed time into minutes after midnight, always as 24-hour time.
+ * Accepts "15:30", "15.30", "1530", "9:05", "930" and, for convenience, "2:30 pm".
+ * Returns null while the entry is incomplete or invalid.
+ * `final` (on blur/Enter) also accepts 3-digit entries like "930", which are ambiguous mid-typing.
+ */
+export function parseTime(text: string, final: boolean): number | null {
+  const t = text.trim().toLowerCase().replace(/[.\s]+(?=\d)/g, ":");
+  let h: number;
+  let m: number;
+  let match: RegExpMatchArray | null;
+  if ((match = t.match(/^(\d{1,2}):(\d{2})$/))) [h, m] = [Number(match[1]), Number(match[2])];
+  else if ((match = t.match(/^(\d{4})$/)) || (final && (match = t.match(/^(\d{3})$/))))
+    [h, m] = [Number(match[1].slice(0, -2)), Number(match[1].slice(-2))];
+  else if (final && (match = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/))) {
+    h = (Number(match[1]) % 12) + (match[3] === "pm" ? 12 : 0);
+    m = Number(match[2] ?? 0);
+    if (Number(match[1]) > 12) return null;
+  } else return null;
+  return h < 24 && m < 60 ? h * 60 + m : null;
+}

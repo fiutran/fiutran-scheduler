@@ -15,7 +15,7 @@ import {
 import { buildBusyIndex, type BusyIndex } from "@/lib/availability";
 import { localDateIso } from "@/lib/time";
 import type { BusyEvent, CalendarProvider, Meeting, Person, TimeOffBlock } from "@/lib/types";
-import { addDaysIso, getDemoWeek } from "@/lib/week";
+import { addDaysIso, getDemoWeek, mondayOf, workWeekOf } from "@/lib/week";
 
 export const PROVIDERS: CalendarProvider[] = ["google", "outlook"];
 export const PROVIDER_LABEL: Record<CalendarProvider, string> = { google: "Google Calendar", outlook: "Outlook" };
@@ -61,6 +61,8 @@ type AppState = {
   setViewerTz: (tz: string) => void;
   selectedDay: string;
   setSelectedDay: (d: string) => void;
+  /** Today's date (yyyy-MM-dd) in your own time zone. */
+  today: string;
 
   // My profile
   updateMe: (patch: Partial<Pick<Person, "timeZone" | "workStartMin" | "workEndMin" | "workDays">>) => void;
@@ -100,15 +102,22 @@ export function useApp(): AppState {
   return v;
 }
 
-/** Length chips offered on the schedule screen. */
-export const STANDARD_LENGTHS = [30, 60, 90];
+/** Lengths offered in the Length dropdown (typed custom times can be any length). */
+export const STANDARD_LENGTHS = [15, 30, 45, 60, 90, 120];
+
+/** The UTC range fetched for a week: Monday–Friday, padded a day each side so every zone's view is covered. */
+function weekRange(mondayIso: string): { from: Date; to: Date } {
+  return {
+    from: new Date(`${addDaysIso(mondayIso, -1)}T00:00:00Z`),
+    to: new Date(`${addDaysIso(mondayIso, 6)}T00:00:00Z`),
+  };
+}
 
 let idSeq = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(idSeq++).toString(36)}`;
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [now, setNow] = useState(0);
-  const [weekDays, setWeekDays] = useState<string[]>([]);
   const [basePeople, setBasePeople] = useState<Person[]>([]);
   const [sourceEvents, setSourceEvents] = useState<BusyEvent[]>([]);
   const [ready, setReady] = useState(false);
@@ -123,9 +132,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [timeOff, setTimeOff] = useState<TimeOffBlock[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [live, setLive] = useState<Record<CalendarProvider, LiveSync>>({ google: EMPTY_SYNC, outlook: EMPTY_SYNC });
-  const [liveEvents, setLiveEvents] = useState<Record<CalendarProvider, BusyEvent[]>>({ google: [], outlook: [] });
+  // Real events per calendar, per week (keyed by that week's Monday), loaded as you browse.
+  const [liveEvents, setLiveEvents] = useState<Record<CalendarProvider, Record<string, BusyEvent[]>>>({
+    google: {},
+    outlook: {},
+  });
   const [sendTo, setSendToState] = useState<CalendarProvider | null>(null);
-  const range = useRef<{ from: Date; to: Date } | null>(null);
+  const loadedWeeks = useRef(new Set<string>());
 
   const [invited, setInvited] = useState<string[]>([]);
   const [durationMin, setDurationMin] = useState(30);
@@ -139,16 +152,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const start = Date.now();
     const week = getDemoWeek(new Date(start));
     setNow(start);
-    setWeekDays(week);
     const today = localDateIso(start, "Asia/Kolkata");
     setSelectedDayState(week.includes(today) ? today : week[0]);
 
     (async () => {
       const people = await getPeople();
-      // Pad the range by a day each side so every zone's view of the week is covered.
-      const from = new Date(`${addDaysIso(week[0], -1)}T00:00:00Z`);
-      const to = new Date(`${addDaysIso(week[4], 2)}T00:00:00Z`);
-      range.current = { from, to };
+      const { from, to } = weekRange(week[0]);
+      loadedWeeks.current.add(week[0]);
       const [lists, statuses] = await Promise.all([
         Promise.all(people.map((p) => getBusyEvents(p.id, from, to))),
         Promise.all(PROVIDERS.map((p) => getLiveStatus(p))),
@@ -181,28 +191,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const meId = basePeople.find((p) => p.isMe)?.id;
+  const viewedMonday = selectedDay ? mondayOf(selectedDay) : "";
+  const weekDays = useMemo(() => (selectedDay ? workWeekOf(selectedDay) : []), [selectedDay]);
+
+  // Sample events for a week you browse to are fetched the first time you view it.
+  useEffect(() => {
+    if (!ready || !viewedMonday || loadedWeeks.current.has(viewedMonday)) return;
+    loadedWeeks.current.add(viewedMonday);
+    const { from, to } = weekRange(viewedMonday);
+    Promise.all(basePeople.map((p) => getBusyEvents(p.id, from, to))).then((lists) =>
+      setSourceEvents((cur) => {
+        const seen = new Set(cur.map((e) => e.id));
+        return [...cur, ...lists.flat().filter((e) => !seen.has(e.id))];
+      }),
+    );
+  }, [ready, viewedMonday, basePeople]);
 
   const forget = useCallback((p: CalendarProvider, error: string | null) => {
-    setLiveEvents((cur) => ({ ...cur, [p]: [] }));
+    setLiveEvents((cur) => ({ ...cur, [p]: {} }));
     setConnections((c) => ({ ...c, [p]: false }));
     setLive((cur) => ({ ...cur, [p]: { ...EMPTY_SYNC, configured: cur[p].configured, error } }));
   }, []);
 
-  /** Pulls your real events for the week from one calendar. */
+  /** Pulls your real events for the week you're viewing from one calendar. */
   const syncOne = useCallback(
     async (p: CalendarProvider) => {
-      if (!range.current || !meId) return;
+      if (!viewedMonday || !meId) return;
+      const monday = viewedMonday;
+      const { from, to } = weekRange(monday);
       setLive((cur) => ({ ...cur, [p]: { ...cur[p], syncing: true } }));
       try {
-        const list = await getLiveBusyEvents(p, meId, range.current.from, range.current.to);
-        setLiveEvents((cur) => ({ ...cur, [p]: list }));
+        const list = await getLiveBusyEvents(p, meId, from, to);
+        setLiveEvents((cur) => ({ ...cur, [p]: { ...cur[p], [monday]: list } }));
         setLive((cur) => ({ ...cur, [p]: { ...cur[p], syncing: false, error: null, lastSynced: Date.now() } }));
       } catch (err) {
         if (err instanceof LiveNotConnectedError) forget(p, err.message);
         else setLive((cur) => ({ ...cur, [p]: { ...cur[p], syncing: false, error: (err as Error).message } }));
       }
     },
-    [meId, forget],
+    [meId, forget, viewedMonday],
   );
 
   const connectedKey = PROVIDERS.filter((p) => live[p].connected).join(",");
@@ -279,7 +306,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // With a real calendar connected, none of your sample events are shown.
         (connections[e.source] && !anyLive),
     );
-    const fromLive = PROVIDERS.flatMap((p) => (live[p].connected ? liveEvents[p] : []));
+    // The same event can appear in two neighbouring weeks' padded ranges; keep one copy.
+    const liveSeen = new Set<string>();
+    const fromLive = PROVIDERS.flatMap((p) => (live[p].connected ? Object.values(liveEvents[p]).flat() : [])).filter(
+      (e) => !liveSeen.has(e.id) && liveSeen.add(e.id),
+    );
     const fromMeetings: BusyEvent[] = meetings.flatMap((m) =>
       // Once a meeting is in your real calendar, your row shows that copy, so deleting it there frees the slot.
       m.attendeeIds.filter((pid) => !(m.liveEvent && live[m.liveEvent.provider].connected && pid === meId)).map((pid) => ({
@@ -374,6 +405,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setViewerTz,
     selectedDay,
     setSelectedDay,
+    today: me && now ? localDateIso(now, me.timeZone) : "",
     updateMe: (patch) => setMePatch((cur) => ({ ...cur, ...patch })),
     connections,
     setConnection,
