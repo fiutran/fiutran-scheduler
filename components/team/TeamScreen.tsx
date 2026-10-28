@@ -136,6 +136,11 @@ function PersonPanel({
             <p className="truncate text-sm text-ink-soft">
               {p.city} · {p.timeZone.replace("_", " ")}
             </p>
+            {!p.email.endsWith(".example") && (
+              <a href={`mailto:${p.email}`} className="block truncate text-sm text-accent-700 underline-offset-2 hover:underline">
+                {p.email}
+              </a>
+            )}
           </div>
         </div>
         <div className="sm:text-right">

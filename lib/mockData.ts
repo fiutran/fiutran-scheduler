@@ -39,8 +39,9 @@ export const MOCK_PEOPLE: Person[] = [
     workStartMin: h("09:30"),
     workEndMin: h("18:30"),
     workDays: [1, 2, 3, 4, 5],
-    calendar: "google",
-    email: "aarti@fiutran.example",
+    // fiutran.com mail is on Microsoft 365, so her calendar is Outlook.
+    calendar: "outlook",
+    email: "letstalk@fiutran.com",
   },
   {
     id: "lena",
