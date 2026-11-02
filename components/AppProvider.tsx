@@ -126,7 +126,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [selectedDay, setSelectedDayState] = useState("");
   const [mePatch, setMePatch] = useState<Partial<Person>>({});
   const [connections, setConnections] = useState<Record<CalendarProvider, boolean>>({
-    outlook: true,
+    outlook: false,
     google: false,
   });
   const [timeOff, setTimeOff] = useState<TimeOffBlock[]>([]);
@@ -169,8 +169,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         PROVIDERS.forEach((p, i) => (next[p] = { ...cur[p], ...statuses[i] }));
         return next;
       });
-      // A calendar set up for real shows its true state; only unconfigured ones keep their sample toggle.
-      PROVIDERS.forEach((p, i) => statuses[i].configured && setConnections((c) => ({ ...c, [p]: statuses[i].connected })));
+      PROVIDERS.forEach((p, i) => setConnections((c) => ({ ...c, [p]: statuses[i].connected })));
       try {
         const saved = localStorage.getItem(SEND_TO_KEY);
         if (saved === "google" || saved === "outlook") setSendToState(saved);
@@ -179,7 +178,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       setBasePeople(people);
       setSourceEvents(lists.flat());
-      setInvited(people.filter((p) => p.id !== "maya").map((p) => p.id));
+      setInvited(people.map((p) => p.id));
       setReady(true);
     })();
 
@@ -190,7 +189,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const meId = basePeople.find((p) => p.isMe)?.id;
+  // Whoever connected a calendar in this browser is matched to their team row by email.
+  const liveIdentity =
+    PROVIDERS.map((p) => live[p]).find((l) => l.connected && l.name) ?? PROVIDERS.map((p) => live[p]).find((l) => l.connected);
+  const matchedId = liveIdentity?.email
+    ? basePeople.find((p) => p.email.toLowerCase() === liveIdentity.email!.toLowerCase())?.id
+    : undefined;
+  const meId = matchedId ?? basePeople.find((p) => p.isMe)?.id;
   const viewedMonday = selectedDay ? mondayOf(selectedDay) : "";
   const weekDays = useMemo(() => (selectedDay ? workWeekOf(selectedDay) : []), [selectedDay]);
 
@@ -250,11 +255,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setConnection = useCallback(
     (p: CalendarProvider, on: boolean) => {
-      // Without credentials on this deployment, a calendar stays simulated (sample data).
-      if (!live[p].configured) {
-        setConnections((cur) => ({ ...cur, [p]: on }));
-        return;
-      }
+      // Without credentials the server sends you back with a "not set up yet" message.
       if (on) connectLive(p);
       else disconnectLive(p).finally(() => forget(p, null));
     },
@@ -273,15 +274,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // "You" takes the name and email of the first connected real calendar that provides them.
-  const liveIdentity = PROVIDERS.map((p) => live[p]).find((l) => l.connected && l.name) ?? PROVIDERS.map((p) => live[p]).find((l) => l.connected);
 
   const people = useMemo(
     () =>
-      basePeople.map((p) => {
+      basePeople.map((base) => {
+        const p = { ...base, isMe: base.id === meId };
         if (!p.isMe) return p;
-        // Once a real calendar is connected, "you" is the signed-in person.
-        const real: Partial<Person> = liveIdentity
+        // An unknown account (not on the team list) takes over the default row's name and email.
+        const real: Partial<Person> = liveIdentity && !matchedId
           ? {
               ...(liveIdentity.name
                 ? { name: liveIdentity.name, firstName: liveIdentity.firstName || liveIdentity.name.split(" ")[0] }
@@ -291,21 +291,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : {};
         return { ...p, ...real, ...mePatch };
       }),
-    [basePeople, mePatch, liveIdentity?.name, liveIdentity?.firstName, liveIdentity?.email],
+    [basePeople, meId, matchedId, mePatch, liveIdentity?.name, liveIdentity?.firstName, liveIdentity?.email],
   );
   const me = people.find((p) => p.isMe) ?? people[0];
 
   const events = useMemo(() => {
     const meId = me?.id;
     // My own calendar events only count while that calendar is connected (simulated sync).
-    const fromCalendars = sourceEvents.filter(
-      (e) =>
-        e.personId !== meId ||
-        e.source === "fiutran" ||
-        e.source === "timeoff" ||
-        // With a real calendar connected, none of your sample events are shown.
-        (connections[e.source] && !anyLive),
-    );
+    // Busy times from the calendar source (teammates' synced calendars, once the shared database exists).
+    const fromCalendars = sourceEvents;
     // The same event can appear in two neighbouring weeks' padded ranges; keep one copy.
     const liveSeen = new Set<string>();
     const fromLive = PROVIDERS.flatMap((p) => (live[p].connected ? Object.values(liveEvents[p]).flat() : [])).filter(
@@ -333,7 +327,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }))
       : [];
     return [...fromCalendars, ...fromLive, ...fromMeetings, ...fromTimeOff];
-  }, [sourceEvents, meetings, timeOff, connections, me?.id, anyLive, live, liveEvents]);
+  }, [sourceEvents, meetings, timeOff, me?.id, live, liveEvents]);
 
   const busyIndex = useMemo(() => buildBusyIndex(events), [events]);
 

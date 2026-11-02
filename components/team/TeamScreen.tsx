@@ -191,7 +191,7 @@ function PersonPanel({
                   live ? "bg-accent-50 text-accent-700 ring-accent-200" : "bg-canvas text-ink-soft ring-line"
                 }`}
               >
-                {live ? "Live" : "Sample data"}
+                {live ? "Live" : "Not shared yet"}
               </span>
             )}
           </dd>
@@ -239,7 +239,11 @@ function PersonPanel({
 
       <WeekCalendar person={p} tz={tz} monday={monday} />
       {!p.isMe && (
-        <p className="mt-2 text-xs text-ink-faint">For privacy, other people&apos;s meetings show only as &ldquo;Not reachable&rdquo;.</p>
+        <p className="mt-2 text-xs text-ink-faint">
+          {p.firstName}&apos;s real calendar appears here once team sharing is set up; until then this shows{" "}
+          {p.firstName}&apos;s working hours and meetings sent from this app. Other people&apos;s meetings only ever show as
+          &ldquo;Not reachable&rdquo;.
+        </p>
       )}
     </article>
   );

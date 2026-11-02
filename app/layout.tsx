@@ -5,7 +5,7 @@ import { Header } from "@/components/Header";
 
 export const metadata: Metadata = {
   title: "Fiutran Scheduler",
-  description: "Find a meeting time that works across time zones. Prototype with sample data.",
+  description: "Find a meeting time that works across time zones. Prototype.",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1 };

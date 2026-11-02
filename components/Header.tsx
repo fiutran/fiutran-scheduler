@@ -26,7 +26,7 @@ export function Header() {
           <span className="text-lg font-semibold tracking-tight">Fiutran Scheduler</span>
         </Link>
         <span className="rounded-full border border-line bg-canvas px-2.5 py-1 text-xs font-medium text-ink-soft">
-          Prototype · sample data
+          Prototype
         </span>
 
         <div className="ml-auto flex items-center gap-2">

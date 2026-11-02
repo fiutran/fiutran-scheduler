@@ -167,14 +167,14 @@ function resultMessage(p: CalendarProvider, result: string): { ok: boolean; text
     case "error":
       return { ok: false, text: `Couldn't connect to ${who}. Please try again.` };
     case "not-configured":
-      return { ok: false, text: `Real ${label} sync isn't set up on this deployment yet, so it stays simulated.` };
+      return { ok: false, text: `${label} sync isn't set up on this site yet.` };
     default:
       return null;
   }
 }
 
 function CalendarsCard() {
-  const { connections, setConnection, me, live, anyLive, syncLive, viewerTz } = useApp();
+  const { connections, setConnection, live, syncLive, viewerTz } = useApp();
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Read and clear ?calendar=…&result=… left by the sign-in redirect.
@@ -224,22 +224,19 @@ function CalendarsCard() {
                       sync.configured ? "bg-accent-50 text-accent-700 ring-accent-200" : "bg-canvas text-ink-soft ring-line"
                     }`}
                   >
-                    {sync.configured ? "Live" : "Sample"}
+                    {sync.configured ? "Live" : "Not set up"}
                   </span>
                 </p>
                 <p className="truncate text-sm text-ink-faint">
                   {on ? (
                     <>
                       <span className="text-accent-700">Connected</span> ·{" "}
-                      {real ? sync.email : id === "outlook" ? me.email : me.email.replace("fiutran", "gmail")}
+                      {sync.email}
                     </>
                   ) : (
                     "Not connected"
                   )}
                 </p>
-                {!real && on && anyLive && (
-                  <p className="text-xs text-ink-faint">Not shown while a real calendar is connected.</p>
-                )}
                 {real && (
                   <p className="text-xs text-ink-faint" aria-live="polite">
                     {sync.syncing ? (
@@ -281,12 +278,11 @@ function CalendarsCard() {
         <Icon name="info" className="mt-0.5 h-4 w-4 shrink-0" />
         {anyConfigured ? (
           <span>
-            Live calendars are real connections: Fiutran reads your events to find your busy times and adds the
-            meetings you send (you pick which calendar when both are connected). Teammates are only named in the event
-            description, so nobody is emailed. Sample calendars use made-up data.
+            Fiutran reads your events to find your busy times and adds the meetings you send (you pick which calendar
+            when both are connected). Teammates are only named in the event description, so nobody is emailed.
           </span>
         ) : (
-          <span>Read-only. Busy times sync automatically; nothing in your calendar is changed.</span>
+          <span>Calendar connections aren&apos;t set up on this site yet.</span>
         )}
       </p>
     </section>

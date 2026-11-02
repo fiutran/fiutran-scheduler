@@ -1,6 +1,6 @@
 # Fiutran Scheduler (prototype)
 
-Clickable prototype of a team meeting scheduler. Runs on **sample data**, with an optional **real, two-way Google Calendar** connection for "you" (see below). No database.
+Team meeting scheduler for Fiutran (prototype). The team is **Diksha** (ms.dikshasharmaa@gmail.com, Google Calendar) and **Aarti** (letstalk@fiutran.com, Outlook). There is **no sample data**: busy times come only from real, two-way calendar connections and meetings or time off created in the app. No database yet, so each person's real calendar shows in their own browser only.
 
 ```bash
 cd fiutran-scheduler
@@ -14,9 +14,9 @@ Stack: Next.js (App Router), TypeScript, Tailwind CSS, `date-fns-tz` for IANA ti
 
 | Path | What |
 |---|---|
-| `lib/calendarSource.ts` | **The only data entry point.** `getPeople()` and `getBusyEvents(personId, rangeStartUtc, rangeEndUtc)` (sample data), plus the real Google read/write calls. |
+| `lib/team.ts` | The team: names, emails, time zones, working hours. Whoever connects a calendar is matched to their row by email. |
+| `lib/calendarSource.ts` | **The only data entry point.** `getPeople()`, `getBusyEvents()` (empty until the shared database exists), plus the real Google/Outlook read/write calls. |
 | `app/api/google/*`, `lib/server/googleAuth.ts` | Server side of the Google connection: OAuth, token refresh, encrypted cookie, Calendar API calls. |
-| `lib/mockData.ts` | Sample team and a week of events, written in each person's local time and converted to UTC. Only imported by `calendarSource.ts`. |
 | `lib/availability.ts` | Free / busy / off-hours logic and suggested-time search. Pure functions, UTC in, UTC out. |
 | `lib/time.ts` | Time zone helpers: conversion, formatting, abbreviations. |
 | `components/AppProvider.tsx` | React context: loaded data, viewer time zone, profile edits, sent meetings, time-off blocks, calendar connections. |
@@ -33,7 +33,7 @@ With the env vars in `.env.example` set, **My profile → Connect** signs in for
 - Delete or move the event in your calendar and your row updates on the next sync.
 - Your row shows only real data once any real calendar is connected; your name comes from that account.
 - Tokens are kept in encrypted, httpOnly cookies (AES-256-GCM, keyed by `AUTH_SECRET`). **Disconnect** forgets them (and revokes at Google).
-- The other teammates stay sample data, labelled as such on the Team screen.
+- A teammate's real calendar isn't visible to others yet (that needs the shared database); the Team screen says "Not shared yet" and shows their working hours plus meetings sent from the app.
 
 Code: `lib/server/providers.ts` (one adapter per provider), `app/api/[provider]/*` (connect, callback, status, events, disconnect), client calls in `lib/calendarSource.ts`.
 
