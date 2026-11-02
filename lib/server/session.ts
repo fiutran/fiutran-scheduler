@@ -1,6 +1,8 @@
 /**
- * Encrypted, httpOnly cookie per connected calendar (no database).
- * AES-256-GCM keyed by AUTH_SECRET; one cookie per provider.
+ * Encryption (AES-256-GCM keyed by AUTH_SECRET) and cookies.
+ * Without a database, each connected calendar lives in its own encrypted cookie.
+ * With the shared database, connections are stored there (also encrypted) and the
+ * browser only keeps "fs_me": which team member it is signed in as.
  */
 import "server-only";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
@@ -14,24 +16,27 @@ export type LiveSession = {
   email: string;
   name?: string;
   firstName?: string;
+  /** Provider-specific data, e.g. iCloud's app-specific password and calendar URLs. */
+  extra?: Record<string, unknown>;
 };
 
 // "fs_google" predates Outlook support; keeping it means existing Google connections survive.
-const SESSION_COOKIE: Record<CalendarProvider, string> = { google: "fs_google", outlook: "fs_outlook" };
+const SESSION_COOKIE: Record<CalendarProvider, string> = { google: "fs_google", outlook: "fs_outlook", icloud: "fs_icloud" };
+const ME_COOKIE = "fs_me";
 export const stateCookie = (p: CalendarProvider) => `${SESSION_COOKIE[p]}_state`;
 
 function key(): Buffer {
   return createHash("sha256").update(process.env.AUTH_SECRET ?? "").digest();
 }
 
-function seal(data: unknown): string {
+export function seal(data: unknown): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key(), iv);
   const body = Buffer.concat([cipher.update(JSON.stringify(data), "utf8"), cipher.final()]);
   return Buffer.concat([iv, cipher.getAuthTag(), body]).toString("base64url");
 }
 
-function unseal<T>(value: string): T | null {
+export function unseal<T>(value: string): T | null {
   try {
     const raw = Buffer.from(value, "base64url");
     const decipher = createDecipheriv("aes-256-gcm", key(), raw.subarray(0, 12));
@@ -76,4 +81,18 @@ export function idTokenClaims(idToken?: string): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+/** Which team member this browser is signed in as (set when they connect a calendar with a team email). */
+export async function readMe(): Promise<string | null> {
+  const value = (await cookies()).get(ME_COOKIE)?.value;
+  return value ? (unseal<{ personId: string }>(value)?.personId ?? null) : null;
+}
+
+export async function writeMe(personId: string): Promise<void> {
+  (await cookies()).set(ME_COOKIE, seal({ personId }), { ...cookieOptions, maxAge: 60 * 60 * 24 * 90 });
+}
+
+export async function clearMe(): Promise<void> {
+  (await cookies()).delete(ME_COOKIE);
 }

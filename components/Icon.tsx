@@ -39,15 +39,20 @@ export function Icon({ name, className = "h-5 w-5" }: { name: IconName; classNam
 }
 
 /** Simplified provider marks: neutral shapes, not brand logos. */
-export function ProviderBadge({ provider }: { provider: "outlook" | "google" }) {
+const BADGE: Record<"outlook" | "google" | "icloud", [string, string]> = {
+  outlook: ["O", "bg-accent-50 text-accent-700"],
+  google: ["G", "bg-canvas text-ink-soft ring-1 ring-line"],
+  icloud: ["i", "bg-ink text-white"],
+};
+
+export function ProviderBadge({ provider }: { provider: "outlook" | "google" | "icloud" }) {
+  const [letter, cls] = BADGE[provider];
   return (
     <span
-      className={`inline-flex h-6 w-6 items-center justify-center rounded-md text-[11px] font-semibold ${
-        provider === "outlook" ? "bg-accent-50 text-accent-700" : "bg-canvas text-ink-soft ring-1 ring-line"
-      }`}
+      className={`inline-flex h-6 w-6 items-center justify-center rounded-md text-[11px] font-semibold ${cls}`}
       aria-hidden="true"
     >
-      {provider === "outlook" ? "O" : "G"}
+      {letter}
     </span>
   );
 }

@@ -1,6 +1,6 @@
 # Fiutran Scheduler (prototype)
 
-Team meeting scheduler for Fiutran (prototype). The team is **Diksha** (ms.dikshasharmaa@gmail.com, Google Calendar) and **Aarti** (letstalk@fiutran.com, Outlook). There is **no sample data**: busy times come only from real, two-way calendar connections and meetings or time off created in the app. No database yet, so each person's real calendar shows in their own browser only.
+Team meeting scheduler for Fiutran (prototype). The team is **Diksha** (ms.dikshasharmaa@gmail.com, Google Calendar) and **Aarti** (letstalk@fiutran.com, Outlook). There is **no sample data**: busy times come only from real, two-way calendar connections and meetings or time off created in the app. With the optional shared database (see "Team sharing"), everyone sees each other's real availability, including iCloud.
 
 ```bash
 cd fiutran-scheduler
@@ -43,6 +43,22 @@ Code: `lib/server/providers.ts` (one adapter per provider), `app/api/[provider]/
 2. **Google Auth Platform**: Branding (app name, emails), Audience **External** in **Testing** with your Gmail under **Test users**, Data access scope `https://www.googleapis.com/auth/calendar.events`.
 3. **Clients → Create client → Web application**, redirect URI `https://<your-site>/api/google/callback` (and `http://localhost:3000/api/google/callback` for local).
 4. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_SECRET`, then redeploy.
+
+### Team sharing (shared database)
+
+Without a database, each person's real calendar shows only in their own browser. With it:
+
+- Each person connects their calendars once (Diksha: Google; Aarti: Outlook and iCloud). Connections are stored **encrypted** in the database, per team member.
+- Everyone sees everyone's real busy times; meeting titles stay private to their owner.
+- **Send invite** saves the meeting and adds it quietly (no emails) to each attendee's main calendar: Diksha → Google, Aarti → Outlook. The organiser can pick another of their own calendars with **Add to** (including iCloud).
+- Deleting the meeting in your own calendar frees you in the app; adding, moving or deleting events in any connected calendar shows up on the next sync.
+- Only team members can see team data: connecting a calendar with a team email signs you in. Other accounts are refused.
+
+Setup: Vercel → project → **Storage** → **Create** → **Upstash for Redis** (free plan) → connect it to the project (adds `KV_REST_API_URL` and `KV_REST_API_TOKEN`) → redeploy. Then each person reconnects their calendars once on **My profile**.
+
+### iCloud setup (per person, needs team sharing)
+
+Apple has no sign-in page for calendar access. On **My profile → iCloud Calendar → Connect**, enter your Apple ID and an **app-specific password** created at account.apple.com (Sign-In and Security → App-Specific Passwords). It's stored encrypted; revoke it at Apple to cut access. The app uses CalDAV (caldav.icloud.com) to read events (repeating events expanded by iCloud) and to create meetings when iCloud is chosen in **Add to**.
 
 ### Outlook setup (Microsoft Entra)
 

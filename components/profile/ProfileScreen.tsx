@@ -149,17 +149,26 @@ function HoursCard() {
   );
 }
 
-const SIGN_IN: Record<CalendarProvider, string> = { google: "Google", outlook: "Microsoft" };
+const SIGN_IN: Record<CalendarProvider, string> = { google: "Google", outlook: "Microsoft", icloud: "Apple" };
 
-function resultMessage(p: CalendarProvider, result: string): { ok: boolean; text: string } | null {
+function resultMessage(p: CalendarProvider, result: string, shared: boolean): { ok: boolean; text: string } | null {
   const label = PROVIDER_LABEL[p];
   const who = SIGN_IN[p];
   switch (result) {
     case "connected":
       return {
         ok: true,
-        text: `${label} connected. Your real events now show on your row, and meetings you send can be added to it.`,
+        text: shared
+          ? `${label} connected and shared with the team: teammates see when you're busy (not what), and meetings scheduled with you are added to your calendar.`
+          : `${label} connected. Your real events now show on your row, and meetings you send can be added to it.`,
       };
+    case "not-on-team":
+      return {
+        ok: false,
+        text: `That ${who} account isn't on the Fiutran team list. Sign in with your team account (ms.dikshasharmaa@gmail.com or letstalk@fiutran.com).`,
+      };
+    case "belongs-to-teammate":
+      return { ok: false, text: "That account belongs to a teammate. Each person connects their own calendars, on their own device." };
     case "denied":
       return { ok: false, text: `${who} sign-in was cancelled. Nothing was connected.` };
     case "missing-permission":
@@ -174,8 +183,9 @@ function resultMessage(p: CalendarProvider, result: string): { ok: boolean; text
 }
 
 function CalendarsCard() {
-  const { connections, setConnection, live, syncLive, viewerTz } = useApp();
+  const { connections, setConnection, live, syncLive, viewerTz, team, teamMode, connectICloud } = useApp();
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [icloudForm, setICloudForm] = useState(false);
 
   // Read and clear ?calendar=…&result=… left by the sign-in redirect.
   useEffect(() => {
@@ -183,10 +193,11 @@ function CalendarsCard() {
     const p = url.searchParams.get("calendar");
     const result = url.searchParams.get("result");
     if ((p !== "google" && p !== "outlook") || !result) return;
-    setMessage(resultMessage(p, result));
+    setMessage(resultMessage(p, result, team.shared));
     url.searchParams.delete("calendar");
     url.searchParams.delete("result");
     window.history.replaceState(null, "", url.pathname + url.search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const anyConfigured = PROVIDERS.some((p) => live[p].configured);
@@ -208,7 +219,7 @@ function CalendarsCard() {
         </p>
       )}
       <ul className="mt-3 divide-y divide-line">
-        {(["outlook", "google"] as const).map((id) => {
+        {(["outlook", "google", "icloud"] as const).map((id) => {
           const sync = live[id];
           const on = connections[id];
           const real = sync.connected;
@@ -250,6 +261,9 @@ function CalendarsCard() {
                 )}
               </div>
               <div className="flex gap-2">
+                {id === "icloud" && !on && sync.configured && !teamMode && (
+                  <span className="max-w-[200px] text-xs text-ink-faint">Connect Google or Outlook first, so the app knows who you are.</span>
+                )}
                 {real && (
                   <button
                     type="button"
@@ -264,19 +278,42 @@ function CalendarsCard() {
                 <button
                   type="button"
                   className={on ? "btn-secondary" : "btn-primary"}
-                  onClick={() => setConnection(id, !on)}
+                  // iCloud has no sign-in page: connecting opens the Apple ID form below.
+                  onClick={() => (id === "icloud" && !on ? setICloudForm((v) => !v) : setConnection(id, !on))}
+                  disabled={id === "icloud" && !on && (!sync.configured || !teamMode)}
                   aria-label={`${on ? "Disconnect" : "Connect"} ${name}`}
+                  aria-expanded={id === "icloud" && !on ? icloudForm : undefined}
                 >
                   {on ? "Disconnect" : "Connect"}
                 </button>
               </div>
+              {id === "icloud" && !on && icloudForm && (
+                <ICloudForm
+                  onCancel={() => setICloudForm(false)}
+                  onSubmit={async (appleId, password) => {
+                    const error = await connectICloud(appleId, password);
+                    if (!error) {
+                      setICloudForm(false);
+                      setMessage({ ok: true, text: "iCloud Calendar connected and shared with the team." });
+                      syncLive();
+                    }
+                    return error;
+                  }}
+                />
+              )}
             </li>
           );
         })}
       </ul>
       <p className="mt-2 flex gap-2 rounded-lg bg-canvas p-3 text-sm text-ink-soft">
         <Icon name="info" className="mt-0.5 h-4 w-4 shrink-0" />
-        {anyConfigured ? (
+        {teamMode ? (
+          <span>
+            Your calendars are shared with the team: teammates see when you&apos;re busy, never what. Meetings scheduled
+            with you are added quietly to your main calendar (no emails), and you can add, move or delete events in any
+            connected calendar and the app follows.
+          </span>
+        ) : anyConfigured ? (
           <span>
             Fiutran reads your events to find your busy times and adds the meetings you send (you pick which calendar
             when both are connected). Teammates are only named in the event description, so nobody is emailed.
@@ -408,5 +445,75 @@ function TimeOffCard() {
         </ul>
       )}
     </section>
+  );
+}
+
+/** Apple ID + app-specific password (Apple has no sign-in page for calendar access). */
+function ICloudForm({
+  onSubmit,
+  onCancel,
+}: {
+  onSubmit: (appleId: string, password: string) => Promise<string | null>;
+  onCancel: () => void;
+}) {
+  const [appleId, setAppleId] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError((await onSubmit(appleId, password)) ?? "");
+    setBusy(false);
+  }
+
+  return (
+    <form onSubmit={submit} className="basis-full space-y-3 rounded-lg border border-line bg-canvas p-3" aria-label="Connect iCloud Calendar">
+      <p className="text-sm text-ink-soft">
+        Create an <strong>app-specific password</strong> at{" "}
+        <a href="https://account.apple.com/account/manage" target="_blank" rel="noreferrer" className="font-medium text-accent-700 underline">
+          account.apple.com
+        </a>{" "}
+        (Sign-In and Security → App-Specific Passwords), then enter it here with your Apple ID. It&apos;s stored encrypted, and
+        you can revoke it at Apple any time.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor="icloud-id" className="label mb-1 block">
+            Apple ID
+          </label>
+          <input id="icloud-id" type="email" autoComplete="username" className="field" value={appleId} onChange={(e) => setAppleId(e.target.value)} required />
+        </div>
+        <div>
+          <label htmlFor="icloud-pw" className="label mb-1 block">
+            App-specific password
+          </label>
+          <input
+            id="icloud-pw"
+            type="password"
+            autoComplete="off"
+            placeholder="xxxx-xxxx-xxxx-xxxx"
+            className="field font-mono"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+        </div>
+      </div>
+      {error && (
+        <p role="alert" className="text-sm font-medium text-busy-700">
+          {error}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button type="submit" className="btn-primary" disabled={busy}>
+          {busy ? "Connecting…" : "Connect iCloud"}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

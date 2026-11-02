@@ -64,6 +64,8 @@ export async function disconnectLive(provider: CalendarProvider): Promise<void> 
 
 export class LiveNotConnectedError extends Error {}
 
+const LABEL: Record<CalendarProvider, string> = { google: "Google Calendar", outlook: "Outlook calendar", icloud: "iCloud calendar" };
+
 /** Read: your real events in the range, as busy blocks on your row. */
 export async function getLiveBusyEvents(
   provider: CalendarProvider,
@@ -74,7 +76,7 @@ export async function getLiveBusyEvents(
   const q = new URLSearchParams({ start: rangeStartUtc.toISOString(), end: rangeEndUtc.toISOString() });
   const res = await fetch(`/api/${provider}/events?${q}`, { cache: "no-store" });
   if (res.status === 401) throw new LiveNotConnectedError((await res.json()).error);
-  if (!res.ok) throw new Error(`Couldn't load your ${provider === "google" ? "Google Calendar" : "Outlook calendar"}`);
+  if (!res.ok) throw new Error(`Couldn't load your ${LABEL[provider]}`);
   const { events } = (await res.json()) as { events: { id: string; startUtc: string; endUtc: string; title: string }[] };
   return events.map((e) => ({
     id: `${provider}-${e.id}`,
@@ -97,6 +99,74 @@ export async function createLiveEvent(
     body: JSON.stringify(meeting),
   });
   if (res.status === 401) throw new LiveNotConnectedError((await res.json()).error);
-  if (!res.ok) throw new Error(`Couldn't add the meeting to your ${provider === "google" ? "Google Calendar" : "Outlook calendar"}`);
+  if (!res.ok) throw new Error(`Couldn't add the meeting to your ${LABEL[provider]}`);
   return (await res.json()) as { id: string; link?: string };
+}
+
+/* ------------------------------------------------------------------ */
+/* Team sharing (shared database). Server side: app/api/team/*,        */
+/* app/api/meetings, lib/server/team.ts.                               */
+/* ------------------------------------------------------------------ */
+
+export type TeamStatus = {
+  /** True when the shared database is set up on this site. */
+  shared: boolean;
+  /** The team member this browser is signed in as (by connecting a calendar with their email). */
+  me: string | null;
+  /** Which calendars each team member has connected. */
+  connections: Record<string, CalendarProvider[]>;
+};
+
+export async function getTeamStatus(): Promise<TeamStatus> {
+  try {
+    const res = await fetch("/api/team/status", { cache: "no-store" });
+    if (!res.ok) throw new Error();
+    return (await res.json()) as TeamStatus;
+  } catch {
+    return { shared: false, me: null, connections: {} };
+  }
+}
+
+export class TeamSignInError extends Error {}
+export type TeamProblem = { personId: string; provider: CalendarProvider; error: string };
+
+/** Everyone's busy times in the range (titles only for your own events). */
+export async function getTeamBusy(from: Date, to: Date): Promise<{ events: BusyEvent[]; problems: TeamProblem[] }> {
+  const q = new URLSearchParams({ start: from.toISOString(), end: to.toISOString() });
+  const res = await fetch(`/api/team/busy?${q}`, { cache: "no-store" });
+  if (res.status === 401) throw new TeamSignInError((await res.json()).error);
+  if (!res.ok) throw new Error("Couldn't load the team's calendars");
+  return res.json();
+}
+
+export type TeamWrite = { personId: string; provider: CalendarProvider; eventId: string; link?: string };
+
+/** Saves a meeting for the team and adds it quietly to each attendee's calendar. */
+export async function createTeamMeeting(m: {
+  title: string;
+  startUtc: string;
+  endUtc: string;
+  attendeeIds: string[];
+  addTo?: CalendarProvider;
+}): Promise<{ writes: TeamWrite[]; failures: { personId: string; provider: CalendarProvider }[] }> {
+  const res = await fetch("/api/meetings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(m),
+  });
+  if (res.status === 401) throw new TeamSignInError((await res.json()).error);
+  if (!res.ok) throw new Error("Couldn't save the meeting");
+  return res.json();
+}
+
+/** Connects iCloud Calendar with an Apple ID and app-specific password. Throws with a readable message. */
+export async function connectICloud(appleId: string, password: string): Promise<{ calendars: string[] }> {
+  const res = await fetch("/api/icloud/connect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ appleId, password }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { error?: string; calendars?: string[] };
+  if (!res.ok) throw new Error(body.error ?? "Couldn't connect iCloud");
+  return { calendars: body.calendars ?? [] };
 }

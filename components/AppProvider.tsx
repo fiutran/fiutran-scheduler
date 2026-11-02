@@ -10,15 +10,27 @@ import {
   getLiveBusyEvents,
   getLiveStatus,
   getPeople,
+  getTeamBusy,
+  getTeamStatus,
+  connectICloud as connectICloudApi,
+  createTeamMeeting,
+  TeamSignInError,
   type LiveStatus,
+  type TeamProblem,
+  type TeamStatus,
+  type TeamWrite,
 } from "@/lib/calendarSource";
 import { buildBusyIndex, type BusyIndex } from "@/lib/availability";
 import { localDateIso } from "@/lib/time";
 import type { BusyEvent, CalendarProvider, Meeting, Person, TimeOffBlock } from "@/lib/types";
 import { addDaysIso, getDemoWeek, mondayOf, workWeekOf } from "@/lib/week";
 
-export const PROVIDERS: CalendarProvider[] = ["google", "outlook"];
-export const PROVIDER_LABEL: Record<CalendarProvider, string> = { google: "Google Calendar", outlook: "Outlook" };
+export const PROVIDERS: CalendarProvider[] = ["google", "outlook", "icloud"];
+export const PROVIDER_LABEL: Record<CalendarProvider, string> = {
+  google: "Google Calendar",
+  outlook: "Outlook",
+  icloud: "iCloud Calendar",
+};
 
 /** Outcome of writing a sent meeting to one of your real calendars (absent when none is really connected). */
 export type LiveWrite = { provider: CalendarProvider } & (
@@ -26,7 +38,12 @@ export type LiveWrite = { provider: CalendarProvider } & (
   | { state: "saved"; link?: string }
   | { state: "failed"; error: string }
 );
-type Confirmation = { meeting: Meeting; viewerTz: string; live?: LiveWrite } | null;
+/** Outcome of a team meeting: which attendees' calendars it was added to. */
+export type TeamSend =
+  | { state: "saving" }
+  | { state: "saved"; writes: TeamWrite[]; failures: { personId: string; provider: CalendarProvider }[] }
+  | { state: "failed"; error: string };
+type Confirmation = { meeting: Meeting; viewerTz: string; live?: LiveWrite; team?: TeamSend } | null;
 
 /** A real calendar connection for "you". `configured` is false when the deployment has no credentials for it. */
 export type LiveSync = LiveStatus & {
@@ -74,6 +91,14 @@ type AppState = {
   syncLive: () => void;
   /** Which real calendar Send invite writes to (null when none is connected). */
   sendTarget: CalendarProvider | null;
+  /** Shared-database team sharing: whether it's on, who you are, who has connected what. */
+  team: TeamStatus;
+  /** True when sharing is on and this browser is signed in as a team member. */
+  teamMode: boolean;
+  /** Teammates' calendars that couldn't be read on the last sync. */
+  teamProblems: TeamProblem[];
+  /** Connects iCloud; resolves to an error message, or null on success. */
+  connectICloud: (appleId: string, password: string) => Promise<string | null>;
   setSendTo: (p: CalendarProvider) => void;
   timeOff: TimeOffBlock[];
   addTimeOff: (b: Omit<TimeOffBlock, "id">) => void;
@@ -128,16 +153,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [connections, setConnections] = useState<Record<CalendarProvider, boolean>>({
     outlook: false,
     google: false,
+    icloud: false,
   });
   const [timeOff, setTimeOff] = useState<TimeOffBlock[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [live, setLive] = useState<Record<CalendarProvider, LiveSync>>({ google: EMPTY_SYNC, outlook: EMPTY_SYNC });
+  const [live, setLive] = useState<Record<CalendarProvider, LiveSync>>({
+    google: EMPTY_SYNC,
+    outlook: EMPTY_SYNC,
+    icloud: EMPTY_SYNC,
+  });
   // Real events per calendar, per week (keyed by that week's Monday), loaded as you browse.
   const [liveEvents, setLiveEvents] = useState<Record<CalendarProvider, Record<string, BusyEvent[]>>>({
     google: {},
     outlook: {},
+    icloud: {},
   });
   const [sendTo, setSendToState] = useState<CalendarProvider | null>(null);
+  const [team, setTeam] = useState<TeamStatus>({ shared: false, me: null, connections: {} });
+  // Everyone's busy times per week (keyed by Monday), in team mode.
+  const [teamEvents, setTeamEvents] = useState<Record<string, BusyEvent[]>>({});
+  const [teamProblems, setTeamProblems] = useState<TeamProblem[]>([]);
   const loadedWeeks = useRef(new Set<string>());
 
   const [invited, setInvited] = useState<string[]>([]);
@@ -159,11 +194,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const people = await getPeople();
       const { from, to } = weekRange(week[0]);
       loadedWeeks.current.add(week[0]);
-      const [lists, statuses] = await Promise.all([
+      const [lists, statuses, teamStatus] = await Promise.all([
         Promise.all(people.map((p) => getBusyEvents(p.id, from, to))),
         Promise.all(PROVIDERS.map((p) => getLiveStatus(p))),
+        getTeamStatus(),
       ]);
       if (cancelled) return;
+      setTeam(teamStatus);
       setLive((cur) => {
         const next = { ...cur };
         PROVIDERS.forEach((p, i) => (next[p] = { ...cur[p], ...statuses[i] }));
@@ -172,7 +209,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       PROVIDERS.forEach((p, i) => setConnections((c) => ({ ...c, [p]: statuses[i].connected })));
       try {
         const saved = localStorage.getItem(SEND_TO_KEY);
-        if (saved === "google" || saved === "outlook") setSendToState(saved);
+        if (saved === "google" || saved === "outlook" || saved === "icloud") setSendToState(saved);
       } catch {
         // Storage can be unavailable (private mode); the default target is used instead.
       }
@@ -195,7 +232,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const matchedId = liveIdentity?.email
     ? basePeople.find((p) => p.email.toLowerCase() === liveIdentity.email!.toLowerCase())?.id
     : undefined;
-  const meId = matchedId ?? basePeople.find((p) => p.isMe)?.id;
+  const teamMode = Boolean(team.shared && team.me);
+  const meId = (teamMode ? team.me : null) ?? matchedId ?? basePeople.find((p) => p.isMe)?.id;
   const viewedMonday = selectedDay ? mondayOf(selectedDay) : "";
   const weekDays = useMemo(() => (selectedDay ? workWeekOf(selectedDay) : []), [selectedDay]);
 
@@ -217,6 +255,50 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setConnections((c) => ({ ...c, [p]: false }));
     setLive((cur) => ({ ...cur, [p]: { ...EMPTY_SYNC, configured: cur[p].configured, error } }));
   }, []);
+
+  /** Re-reads connection status for every calendar and for the team. */
+  const refreshStatuses = useCallback(async () => {
+    const [statuses, teamStatus] = await Promise.all([Promise.all(PROVIDERS.map((p) => getLiveStatus(p))), getTeamStatus()]);
+    setLive((cur) => {
+      const next = { ...cur };
+      PROVIDERS.forEach((p, i) => (next[p] = { ...cur[p], ...statuses[i] }));
+      return next;
+    });
+    PROVIDERS.forEach((p, i) => setConnections((c) => ({ ...c, [p]: statuses[i].connected })));
+    setTeam(teamStatus);
+  }, []);
+
+  /** Team mode: loads everyone's busy times for the week you're viewing. */
+  const loadTeamWeek = useCallback(async () => {
+    if (!viewedMonday) return;
+    const monday = viewedMonday;
+    const { from, to } = weekRange(monday);
+    setLive((cur) => {
+      const next = { ...cur };
+      PROVIDERS.forEach((p) => cur[p].connected && (next[p] = { ...cur[p], syncing: true }));
+      return next;
+    });
+    try {
+      const { events, problems } = await getTeamBusy(from, to);
+      setTeamEvents((cur) => ({ ...cur, [monday]: events }));
+      setTeamProblems(problems);
+      setLive((cur) => {
+        const next = { ...cur };
+        PROVIDERS.forEach((p) => {
+          const mine = problems.find((x) => x.personId === meId && x.provider === p);
+          next[p] = { ...cur[p], syncing: false, lastSynced: Date.now(), error: mine ? `Your ${PROVIDER_LABEL[p]} ${mine.error}.` : null };
+        });
+        return next;
+      });
+    } catch (err) {
+      if (err instanceof TeamSignInError) await refreshStatuses();
+      setLive((cur) => {
+        const next = { ...cur };
+        PROVIDERS.forEach((p) => (next[p] = { ...cur[p], syncing: false }));
+        return next;
+      });
+    }
+  }, [viewedMonday, meId, refreshStatuses]);
 
   /** Pulls your real events for the week you're viewing from one calendar. */
   const syncOne = useCallback(
@@ -240,26 +322,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const connectedKey = PROVIDERS.filter((p) => live[p].connected).join(",");
   /** Runs on load, on tab focus, after sending an invite, and from "Sync now". */
   const syncLive = useCallback(() => {
-    PROVIDERS.forEach((p) => live[p].connected && syncOne(p));
+    if (teamMode) loadTeamWeek();
+    else PROVIDERS.forEach((p) => live[p].connected && syncOne(p));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectedKey, syncOne]);
+  }, [connectedKey, syncOne, teamMode, loadTeamWeek]);
 
   useEffect(() => {
-    if (!ready || !connectedKey) return;
+    if (!ready || (!connectedKey && !teamMode)) return;
     syncLive();
     // Two-way check: edit your calendar in another tab, come back, and the grid updates.
     const onVisible = () => document.visibilityState === "visible" && syncLive();
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [ready, connectedKey, syncLive]);
+  }, [ready, connectedKey, teamMode, syncLive]);
 
   const setConnection = useCallback(
     (p: CalendarProvider, on: boolean) => {
       // Without credentials the server sends you back with a "not set up yet" message.
       if (on) connectLive(p);
-      else disconnectLive(p).finally(() => forget(p, null));
+      else
+        disconnectLive(p).finally(async () => {
+          forget(p, null);
+          await refreshStatuses();
+          setTeamEvents({});
+        });
     },
-    [live, forget],
+    [forget, refreshStatuses],
+  );
+
+  const connectICloud = useCallback(
+    async (appleId: string, password: string) => {
+      try {
+        await connectICloudApi(appleId, password);
+        await refreshStatuses();
+        return null;
+      } catch (err) {
+        return (err as Error).message;
+      }
+    },
+    [refreshStatuses],
   );
 
   const anyLive = PROVIDERS.some((p) => live[p].connected);
@@ -326,8 +427,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           source: "timeoff" as const,
         }))
       : [];
+    if (teamMode) {
+      // Everything comes from the server: everyone's calendars plus meetings made in the app.
+      const seen = new Set<string>();
+      const fromTeam = Object.values(teamEvents)
+        .flat()
+        .filter((e) => !seen.has(e.id) && seen.add(e.id));
+      return [...fromTeam, ...fromTimeOff];
+    }
     return [...fromCalendars, ...fromLive, ...fromMeetings, ...fromTimeOff];
-  }, [sourceEvents, meetings, timeOff, me?.id, live, liveEvents]);
+  }, [sourceEvents, meetings, timeOff, me?.id, live, liveEvents, teamMode, teamEvents]);
 
   const busyIndex = useMemo(() => buildBusyIndex(events), [events]);
 
@@ -359,10 +468,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Keep team order so attendee lists read consistently.
       attendeeIds: people.filter((p) => invited.includes(p.id)).map((p) => p.id),
     };
-    setMeetings((cur) => [...cur, meeting]);
     setSelectionStart(null);
     setTitle("");
     resetCustomLength();
+
+    if (teamMode) {
+      // Saved centrally and added quietly to each attendee's calendar.
+      setConfirmation({ meeting, viewerTz, team: { state: "saving" } });
+      const update = (t: TeamSend) => setConfirmation((c) => (c && c.meeting.id === meeting.id ? { ...c, team: t } : c));
+      createTeamMeeting({ ...meeting, addTo: sendTarget ?? undefined })
+        .then(async ({ writes, failures }) => {
+          await loadTeamWeek();
+          update({ state: "saved", writes, failures });
+        })
+        .catch((err: Error) => update({ state: "failed", error: err.message }));
+      return;
+    }
+    setMeetings((cur) => [...cur, meeting]);
 
     const meInvited = people.some((p) => p.isMe && invited.includes(p.id));
     const target = sendTarget;
@@ -385,7 +507,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         update({ provider: target, state: "saved", link });
       })
       .catch((err: Error) => update({ provider: target, state: "failed", error: err.message }));
-  }, [selectionStart, invited, title, durationMin, people, viewerTz, sendTarget, syncOne, resetCustomLength]);
+  }, [selectionStart, invited, title, durationMin, people, viewerTz, sendTarget, syncOne, resetCustomLength, teamMode, loadTeamWeek]);
 
   const value: AppState = {
     ready,
@@ -408,6 +530,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     syncLive,
     sendTarget,
     setSendTo,
+    team,
+    teamMode,
+    teamProblems,
+    connectICloud,
     timeOff,
     addTimeOff: (b) => setTimeOff((cur) => [...cur, { ...b, id: newId("off") }].sort((a, z) => a.startUtc.localeCompare(z.startUtc))),
     removeTimeOff: (id) => setTimeOff((cur) => cur.filter((b) => b.id !== id)),

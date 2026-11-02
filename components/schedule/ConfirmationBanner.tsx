@@ -7,7 +7,11 @@ import { fmtDate, fmtRange } from "@/lib/time";
 export function ConfirmationBanner() {
   const { confirmation, dismissConfirmation, people } = useApp();
   if (!confirmation) return null;
-  const { meeting, viewerTz, live } = confirmation;
+  const { meeting, viewerTz, live, team } = confirmation;
+  const who = (pid: string) => {
+    const p = people.find((x) => x.id === pid);
+    return p?.isMe ? "your" : `${p?.firstName ?? "their"}'s`;
+  };
   const start = Date.parse(meeting.startUtc);
   const end = Date.parse(meeting.endUtc);
   const names = people.filter((p) => meeting.attendeeIds.includes(p.id)).map((p) => (p.isMe ? "you" : p.firstName));
@@ -21,8 +25,21 @@ export function ConfirmationBanner() {
         <p className="font-semibold">Invite sent: {meeting.title}</p>
         <p>
           {fmtDate(start, viewerTz)}, <span className="font-mono">{fmtRange(start, end, viewerTz)}</span> with{" "}
-          {names.join(", ")}. It now shows as busy on everyone&apos;s calendar.
+          {names.join(", ")}. It now shows as busy for everyone invited.
         </p>
+        {team?.state === "saving" && <p className="mt-1">Adding it to everyone&apos;s calendars…</p>}
+        {team?.state === "saved" && team.writes.length > 0 && (
+          <p className="mt-1">
+            Added to {team.writes.map((w) => `${who(w.personId)} ${PROVIDER_LABEL[w.provider]}`).join(" and ")}. No emails were sent.
+          </p>
+        )}
+        {team?.state === "saved" && team.failures.length > 0 && (
+          <p className="mt-1 font-medium text-busy-700">
+            Couldn&apos;t add it to {team.failures.map((f) => `${who(f.personId)} ${PROVIDER_LABEL[f.provider]}`).join(" or ")}. It still
+            shows as busy in the app.
+          </p>
+        )}
+        {team?.state === "failed" && <p className="mt-1 font-medium text-busy-700">Couldn&apos;t save the meeting: {team.error}</p>}
         {live?.state === "saving" && <p className="mt-1">Adding it to your {PROVIDER_LABEL[live.provider]}…</p>}
         {live?.state === "saved" && (
           <p className="mt-1">

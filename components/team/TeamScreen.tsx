@@ -105,19 +105,23 @@ function PersonPanel({
   today: string;
   state: Presence;
 }) {
-  const { now, viewerTz, connections, live: liveSync, anyLive } = useApp();
+  const { now, viewerTz, connections, live: liveSync, anyLive, team, teamMode } = useApp();
   // The calendar follows "Show times in" like everywhere else, with a switch to this person's own zone.
   const [ownZone, setOwnZone] = useState(false);
   const tz = ownZone ? p.timeZone : viewerTz;
 
   const whStart = zonedToUtc(selectedDay, p.workStartMin, p.timeZone);
   const whEnd = zonedToUtc(selectedDay, p.workEndMin, p.timeZone);
-  const live = Boolean(p.isMe && anyLive);
-  const calendars: CalendarProvider[] = live
-    ? (["google", "outlook"] as const).filter((c) => liveSync[c].connected)
-    : p.isMe
-      ? (["outlook", "google"] as const).filter((c) => connections[c])
-      : [p.calendar];
+  // Team mode: what each person has connected on the server. Otherwise only your own browser is known.
+  const shared = teamMode ? (team.connections[p.id] ?? []) : null;
+  const live = shared ? shared.length > 0 : Boolean(p.isMe && anyLive);
+  const calendars: CalendarProvider[] = shared
+    ? shared
+    : live
+      ? (["google", "outlook", "icloud"] as const).filter((c) => liveSync[c].connected)
+      : p.isMe
+        ? (["outlook", "google", "icloud"] as const).filter((c) => connections[c])
+        : [p.calendar];
   const sunday = addDaysIso(monday, 6);
 
   return (
@@ -181,7 +185,7 @@ function PersonPanel({
               calendars.map((c) => (
                 <span key={c} className="inline-flex items-center gap-1.5">
                   <ProviderBadge provider={c} />
-                  {c === "outlook" ? "Outlook" : "Google"}
+                  {c === "outlook" ? "Outlook" : c === "google" ? "Google" : "iCloud"}
                 </span>
               ))
             )}
@@ -191,7 +195,7 @@ function PersonPanel({
                   live ? "bg-accent-50 text-accent-700 ring-accent-200" : "bg-canvas text-ink-soft ring-line"
                 }`}
               >
-                {live ? "Live" : "Not shared yet"}
+                {live ? "Live" : shared ? "Not connected" : "Not shared yet"}
               </span>
             )}
           </dd>
@@ -238,7 +242,12 @@ function PersonPanel({
       </p>
 
       <WeekCalendar person={p} tz={tz} monday={monday} />
-      {!p.isMe && (
+      {!p.isMe && teamMode && (
+        <p className="mt-2 text-xs text-ink-faint">
+          From {p.firstName}&apos;s connected calendars. Other people&apos;s meetings only ever show as &ldquo;Not reachable&rdquo;.
+        </p>
+      )}
+      {!p.isMe && !teamMode && (
         <p className="mt-2 text-xs text-ink-faint">
           {p.firstName}&apos;s real calendar appears here once team sharing is set up; until then this shows{" "}
           {p.firstName}&apos;s working hours and meetings sent from this app. Other people&apos;s meetings only ever show as

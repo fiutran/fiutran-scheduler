@@ -9,7 +9,9 @@
  *   MICROSOFT_TENANT (optional, default "common") – "common" = personal and work accounts
  */
 import "server-only";
-import { idTokenClaims, readSession, writeSession, type LiveSession } from "./session";
+import { createICloudEvent, ICloudAuthError, listICloudEvents } from "./icloud";
+import { idTokenClaims, type LiveSession } from "./session";
+import { dbConfigured, readConn, writeConn } from "./store";
 import type { CalendarProvider } from "@/lib/types";
 
 export class NotConnectedError extends Error {}
@@ -22,6 +24,8 @@ type Tokens = { access_token: string; refresh_token?: string; expires_in: number
 export type Provider = {
   id: CalendarProvider;
   label: string;
+  /** "oauth": sign in at the provider. "password": iCloud's Apple ID + app-specific password. */
+  kind: "oauth" | "password";
   configured: () => boolean;
   authorizeUrl: (redirectUri: string, state: string) => string;
   exchangeCode: (code: string, redirectUri: string) => Promise<Tokens>;
@@ -29,8 +33,8 @@ export type Provider = {
   /** Whether the granted scopes include calendar read/write. */
   hasCalendarScope: (t: Tokens) => boolean;
   profile: (t: Tokens) => Promise<{ email?: string; name?: string; firstName?: string }>;
-  listEvents: (accessToken: string, startIso: string, endIso: string) => Promise<LiveEvent[]>;
-  createEvent: (accessToken: string, e: NewEvent) => Promise<{ id: string; link?: string }>;
+  listEvents: (s: LiveSession, startIso: string, endIso: string) => Promise<LiveEvent[]>;
+  createEvent: (s: LiveSession, e: NewEvent) => Promise<{ id: string; link?: string }>;
   revoke: (s: LiveSession) => Promise<void>;
 };
 
@@ -73,6 +77,7 @@ type GEvent = {
 const google: Provider = {
   id: "google",
   label: "Google Calendar",
+  kind: "oauth",
   configured: () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.AUTH_SECRET),
   authorizeUrl: (redirectUri, state) =>
     "https://accounts.google.com/o/oauth2/v2/auth?" +
@@ -114,7 +119,8 @@ const google: Provider = {
     }
     return { email: c.email, name: c.name, firstName: c.given_name };
   },
-  async listEvents(accessToken, startIso, endIso) {
+  async listEvents(s, startIso, endIso) {
+    const accessToken = s.accessToken;
     const items: GEvent[] = [];
     let pageToken: string | undefined;
     do {
@@ -146,8 +152,8 @@ const google: Provider = {
         }))
     );
   },
-  async createEvent(accessToken, e) {
-    const res = await api("https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none", accessToken, {
+  async createEvent(s, e) {
+    const res = await api("https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none", s.accessToken, {
       method: "POST",
       body: JSON.stringify({
         summary: e.title,
@@ -194,6 +200,7 @@ const msUtc = (d: MsDateTime) => new Date(/[zZ]|[+-]\d\d:\d\d$/.test(d.dateTime)
 const outlook: Provider = {
   id: "outlook",
   label: "Outlook",
+  kind: "oauth",
   configured: () =>
     Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET && process.env.AUTH_SECRET),
   authorizeUrl: (redirectUri, state) =>
@@ -239,7 +246,8 @@ const outlook: Provider = {
       firstName: me.givenName || undefined,
     };
   },
-  async listEvents(accessToken, startIso, endIso) {
+  async listEvents(s, startIso, endIso) {
+    const accessToken = s.accessToken;
     const items: MsEvent[] = [];
     let url: string | undefined =
       "https://graph.microsoft.com/v1.0/me/calendarView?" +
@@ -264,9 +272,9 @@ const outlook: Provider = {
         .map((e) => ({ id: e.id, startUtc: msUtc(e.start), endUtc: msUtc(e.end), title: e.subject || "(No title)", link: e.webLink }))
     );
   },
-  async createEvent(accessToken, e) {
+  async createEvent(s, e) {
     // No attendees are added, so Outlook sends no invitations.
-    const res = await api("https://graph.microsoft.com/v1.0/me/events", accessToken, {
+    const res = await api("https://graph.microsoft.com/v1.0/me/events", s.accessToken, {
       method: "POST",
       body: JSON.stringify({
         subject: e.title,
@@ -284,17 +292,57 @@ const outlook: Provider = {
   revoke: async () => undefined,
 };
 
-export const PROVIDERS: Record<CalendarProvider, Provider> = { google, outlook };
+/* -------------------------------- iCloud (CalDAV) -------------------------------- */
+
+const noOauth = () => {
+  throw new Error("iCloud connects with an Apple ID and app-specific password, not a sign-in page");
+};
+
+const icloud: Provider = {
+  id: "icloud",
+  label: "iCloud Calendar",
+  kind: "password",
+  // The app-specific password must be stored server-side, so iCloud needs the shared database.
+  configured: () => dbConfigured(),
+  authorizeUrl: noOauth,
+  exchangeCode: noOauth,
+  refresh: noOauth,
+  hasCalendarScope: () => true,
+  profile: async () => ({}),
+  async listEvents(s, startIso, endIso) {
+    try {
+      return await listICloudEvents(s, startIso, endIso);
+    } catch (err) {
+      if (err instanceof ICloudAuthError) throw new NotConnectedError(err.message);
+      throw err;
+    }
+  },
+  async createEvent(s, e) {
+    try {
+      return await createICloudEvent(s, e);
+    } catch (err) {
+      if (err instanceof ICloudAuthError) throw new NotConnectedError(err.message);
+      throw err;
+    }
+  },
+  // Access ends when the app-specific password is revoked at appleid.apple.com; we just forget it.
+  revoke: async () => undefined,
+};
+
+export const PROVIDERS: Record<CalendarProvider, Provider> = { google, outlook, icloud };
 
 export function getProvider(id: string): Provider | null {
-  return id === "google" || id === "outlook" ? PROVIDERS[id] : null;
+  return id === "google" || id === "outlook" || id === "icloud" ? PROVIDERS[id] : null;
 }
 
-/** A valid session for a provider, refreshing the access token when it's about to expire. */
-export async function activeSession(p: Provider): Promise<LiveSession> {
-  const session = await readSession(p.id);
+/**
+ * A valid connection, refreshing the access token when it's about to expire.
+ * `personId` reads a teammate's connection from the shared database (server-side only).
+ */
+export async function activeSession(p: Provider, personId?: string | null): Promise<LiveSession> {
+  const session = await readConn(p.id, personId);
   if (!session) throw new NotConnectedError(`${p.label} is not connected`);
-  if (session.expiresAt - 60_000 > Date.now()) return session;
+  if (p.kind === "password" || session.expiresAt - 60_000 > Date.now()) return session;
   if (!session.refreshToken) throw new NotConnectedError(`${p.label} session expired; connect again`);
   const t = await p.refresh(session.refreshToken);
   const next: LiveSession = {
@@ -304,19 +352,19 @@ export async function activeSession(p: Provider): Promise<LiveSession> {
     refreshToken: t.refresh_token ?? session.refreshToken,
     expiresAt: Date.now() + t.expires_in * 1000,
   };
-  await writeSession(p.id, next);
+  await writeConn(p.id, next, personId);
   return next;
 }
 
 /** Fills in a missing name on an older session. */
 export async function ensureName(p: Provider, session: LiveSession): Promise<LiveSession> {
-  if (session.name) return session;
+  if (session.name || p.kind === "password") return session;
   try {
     const fresh = await activeSession(p);
     const info = await p.profile({ access_token: fresh.accessToken, expires_in: 0 });
     if (!info.name) return fresh;
     const next = { ...fresh, name: info.name, firstName: info.firstName };
-    await writeSession(p.id, next);
+    await writeConn(p.id, next);
     return next;
   } catch {
     return session;

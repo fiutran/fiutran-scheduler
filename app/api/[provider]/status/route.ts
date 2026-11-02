@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureName, getProvider } from "@/lib/server/providers";
-import { readSession } from "@/lib/server/session";
+import { readConn } from "@/lib/server/store";
 
 export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ provider: string }> };
@@ -9,7 +9,7 @@ export async function GET(_req: Request, { params }: Ctx) {
   const p = getProvider((await params).provider);
   if (!p) return NextResponse.json({ error: "Unknown calendar" }, { status: 404 });
   const configured = p.configured();
-  const stored = configured ? await readSession(p.id) : null;
+  const stored = configured ? await readConn(p.id) : null;
   const session = stored ? await ensureName(p, stored) : null;
   return NextResponse.json({
     configured,

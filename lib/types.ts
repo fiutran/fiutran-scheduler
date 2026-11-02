@@ -1,5 +1,5 @@
 /** Calendar providers a person can connect. "local" = created inside Fiutran. */
-export type CalendarProvider = "outlook" | "google";
+export type CalendarProvider = "outlook" | "google" | "icloud";
 
 export type Person = {
   id: string;

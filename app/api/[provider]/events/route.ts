@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   }
   try {
     const s = await activeSession(p);
-    const events = await p.listEvents(s.accessToken, new Date(start).toISOString(), new Date(end).toISOString());
+    const events = await p.listEvents(s, new Date(start).toISOString(), new Date(end).toISOString());
     return NextResponse.json({ events });
   } catch (err) {
     return fail(err);
@@ -47,7 +47,7 @@ export async function POST(req: Request, { params }: Ctx) {
   }
   try {
     const s = await activeSession(p);
-    const created = await p.createEvent(s.accessToken, {
+    const created = await p.createEvent(s, {
       title: (body.title ?? "").slice(0, 200) || "Untitled meeting",
       startUtc: new Date(start).toISOString(),
       endUtc: new Date(end).toISOString(),
