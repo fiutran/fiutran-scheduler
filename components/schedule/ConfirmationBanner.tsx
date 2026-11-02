@@ -2,7 +2,8 @@
 
 import { PROVIDER_LABEL, useApp } from "../AppProvider";
 import { Icon } from "../Icon";
-import { fmtDate, fmtRange } from "@/lib/time";
+import { recurrenceSummary } from "@/lib/recurrence";
+import { fmtDate, fmtRange, localDateIso } from "@/lib/time";
 
 export function ConfirmationBanner() {
   const { confirmation, dismissConfirmation, people } = useApp();
@@ -22,7 +23,15 @@ export function ConfirmationBanner() {
         <Icon name="check" className="h-4 w-4" />
       </span>
       <div className="flex-1">
-        <p className="font-semibold">Invite sent: {meeting.title}</p>
+        <p className="font-semibold">
+          Invite sent: {meeting.title}
+          {meeting.recurrence && (
+            <span className="font-normal">
+              {" "}
+              · repeats {recurrenceSummary(meeting.recurrence, localDateIso(start, meeting.recurrence.timeZone))}
+            </span>
+          )}
+        </p>
         <p>
           {fmtDate(start, viewerTz)}, <span className="font-mono">{fmtRange(start, end, viewerTz)}</span> with{" "}
           {names.join(", ")}. It now shows as busy for everyone invited.

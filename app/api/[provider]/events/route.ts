@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { NotConnectedError, activeSession, getProvider } from "@/lib/server/providers";
+import { isValidRecurrence, type Recurrence } from "@/lib/recurrence";
 import { sameOrigin } from "@/lib/server/session";
 
 export const dynamic = "force-dynamic";
@@ -38,12 +39,15 @@ export async function POST(req: Request, { params }: Ctx) {
   if (!p) return NextResponse.json({ error: "Unknown calendar" }, { status: 404 });
   if (!sameOrigin(req)) return NextResponse.json({ error: "Bad origin" }, { status: 403 });
   const body = (await req.json().catch(() => null)) as
-    | { title?: string; startUtc?: string; endUtc?: string; attendeeNames?: string[] }
+    | { title?: string; startUtc?: string; endUtc?: string; attendeeNames?: string[]; recurrence?: unknown }
     | null;
   const start = body?.startUtc ? Date.parse(body.startUtc) : NaN;
   const end = body?.endUtc ? Date.parse(body.endUtc) : NaN;
   if (!body || Number.isNaN(start) || Number.isNaN(end) || end <= start || end - start > 24 * 3600_000) {
     return NextResponse.json({ error: "Invalid meeting" }, { status: 400 });
+  }
+  if (body.recurrence !== undefined && !isValidRecurrence(body.recurrence)) {
+    return NextResponse.json({ error: "Invalid repeat settings" }, { status: 400 });
   }
   try {
     const s = await activeSession(p);
@@ -54,6 +58,7 @@ export async function POST(req: Request, { params }: Ctx) {
       description: `Scheduled with Fiutran Scheduler (prototype).\nInvited from the sample team: ${(body.attendeeNames ?? [])
         .slice(0, 20)
         .join(", ")}`,
+      recurrence: body.recurrence as Recurrence | undefined,
     });
     return NextResponse.json(created);
   } catch (err) {

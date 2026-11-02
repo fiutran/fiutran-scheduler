@@ -8,6 +8,7 @@ import { TimeField } from "../TimeField";
 import { Icon } from "../Icon";
 import { attendeeStatus } from "@/lib/availability";
 import { showYouTag } from "@/lib/people";
+import { MAX_OCCURRENCES, REPEAT_FREQS, recurrenceSummary, repeatLabel, type RepeatFreq } from "@/lib/recurrence";
 import { durationLabel, fmtDate, fmtRange, fmtTime, tzAbbr, zonedToUtc } from "@/lib/time";
 import type { Person } from "@/lib/types";
 
@@ -40,6 +41,8 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
     live,
     sendTarget,
     setSendTo,
+    repeat,
+    setRepeat,
   } = useApp();
   const liveConnected = PROVIDERS.filter((p) => live[p].connected);
   const meInvited = invitedPeople.some((p) => p.isMe);
@@ -82,7 +85,8 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
         <span className="font-mono text-ink">
           {fmtDate(start, viewerTz)} · {fmtRange(start, end, viewerTz)}
         </span>{" "}
-        · {durationLabel(durationMin)} ·{" "}
+        · {durationLabel(durationMin)}
+        {repeat.freq !== "none" && <> · repeats {recurrenceSummary({ freq: repeat.freq, count: repeat.count, timeZone: viewerTz }, selectedDay)}</>} ·{" "}
         {unavailable.length === 0 ? (
           <span className="font-medium text-accent-700">Everyone is available</span>
         ) : (
@@ -173,6 +177,44 @@ export function MeetingComposer({ invitedPeople }: { invitedPeople: Person[] }) 
               </option>
             ))}
           </select>
+        </div>
+        <div>
+          <label htmlFor="mtg-repeat" className="label mb-2 block">
+            Repeat
+          </label>
+          <div className="flex items-center gap-2">
+            <select
+              id="mtg-repeat"
+              className="field w-auto min-w-[150px]"
+              value={repeat.freq}
+              onChange={(e) => setRepeat({ ...repeat, freq: e.target.value as RepeatFreq | "none" })}
+            >
+              <option value="none">Does not repeat</option>
+              {REPEAT_FREQS.map((f) => (
+                <option key={f} value={f}>
+                  {repeatLabel(f, selectedDay)}
+                </option>
+              ))}
+            </select>
+            {repeat.freq !== "none" && (
+              <>
+                <label htmlFor="mtg-repeat-count" className="sr-only">
+                  Number of meetings
+                </label>
+                <input
+                  id="mtg-repeat-count"
+                  type="number"
+                  inputMode="numeric"
+                  min={2}
+                  max={MAX_OCCURRENCES}
+                  className="field w-[76px] font-mono"
+                  value={repeat.count}
+                  onChange={(e) => setRepeat({ ...repeat, count: Math.min(MAX_OCCURRENCES, Math.max(2, Number(e.target.value) || 2)) })}
+                />
+                <span className="text-sm text-ink-soft">times</span>
+              </>
+            )}
+          </div>
         </div>
         <MultiSelect
           label="Who's invited"

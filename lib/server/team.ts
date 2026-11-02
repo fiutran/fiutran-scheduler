@@ -4,6 +4,7 @@
  * meeting titles are only returned for the person asking.
  */
 import "server-only";
+import { occurrences } from "@/lib/recurrence";
 import { TEAM } from "@/lib/team";
 import type { BusyEvent, CalendarProvider, Person } from "@/lib/types";
 import { NotConnectedError, PROVIDERS, activeSession } from "./providers";
@@ -62,18 +63,24 @@ export async function teamBusy(me: string, from: Date, to: Date): Promise<{ even
 
   // A meeting blocks each attendee directly, unless it was written into their calendar:
   // then the calendar copy counts, so deleting it there frees that person.
-  const meetings = (await readMeetings()).filter((m) => Date.parse(m.startUtc) < to.getTime() && Date.parse(m.endUtc) > from.getTime());
-  const fromMeetings: BusyEvent[] = meetings.flatMap((m: StoredMeeting) =>
-    m.attendeeIds
-      .filter((pid) => !m.writes.some((w) => w.personId === pid && (conns[pid] ?? []).includes(w.provider)))
-      .map((pid) => ({
-        id: `${m.id}-${pid}`,
+  const fromMeetings: BusyEvent[] = (await readMeetings()).flatMap((m: StoredMeeting) => {
+    const start = Date.parse(m.startUtc);
+    const end = Date.parse(m.endUtc);
+    // A series contributes every occurrence that falls in the range.
+    const times = (m.recurrence ? occurrences(start, end, m.recurrence) : [{ start, end }]).filter(
+      (o) => o.start < to.getTime() && o.end > from.getTime(),
+    );
+    const blocked = m.attendeeIds.filter((pid) => !m.writes.some((w) => w.personId === pid && (conns[pid] ?? []).includes(w.provider)));
+    return times.flatMap((o) =>
+      blocked.map((pid) => ({
+        id: `${m.id}-${o.start}-${pid}`,
         personId: pid,
-        startUtc: m.startUtc,
-        endUtc: m.endUtc,
+        startUtc: new Date(o.start).toISOString(),
+        endUtc: new Date(o.end).toISOString(),
         title: pid === me ? m.title : undefined,
         source: "fiutran" as const,
       })),
-  );
+    );
+  });
   return { events: [...lists.flat(), ...fromMeetings], problems };
 }

@@ -21,6 +21,7 @@ import {
   type TeamWrite,
 } from "@/lib/calendarSource";
 import { buildBusyIndex, type BusyIndex } from "@/lib/availability";
+import { MAX_OCCURRENCES, occurrences, type RepeatFreq } from "@/lib/recurrence";
 import { localDateIso } from "@/lib/time";
 import type { BusyEvent, CalendarProvider, Meeting, Person, TimeOffBlock } from "@/lib/types";
 import { addDaysIso, getDemoWeek, mondayOf, workWeekOf } from "@/lib/week";
@@ -113,6 +114,9 @@ type AppState = {
   setTitle: (t: string) => void;
   selectionStart: number | null;
   setSelectionStart: (ms: number | null) => void;
+  /** Repeat settings for the meeting being set up ("none" = one-off). */
+  repeat: { freq: RepeatFreq | "none"; count: number };
+  setRepeat: (r: { freq: RepeatFreq | "none"; count: number }) => void;
   sendInvite: () => void;
   clearDraft: () => void;
   confirmation: Confirmation;
@@ -179,6 +183,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [durationMin, setDurationMin] = useState(30);
   const [title, setTitle] = useState("");
   const [selectionStart, setSelectionStart] = useState<number | null>(null);
+  const [repeat, setRepeatState] = useState<{ freq: RepeatFreq | "none"; count: number }>({ freq: "none", count: 10 });
   const [confirmation, setConfirmation] = useState<Confirmation>(null);
 
   // Load from the calendar source on the client only, so "now" never differs between server and browser.
@@ -406,17 +411,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const fromLive = PROVIDERS.flatMap((p) => (live[p].connected ? Object.values(liveEvents[p]).flat() : [])).filter(
       (e) => !liveSeen.has(e.id) && liveSeen.add(e.id),
     );
-    const fromMeetings: BusyEvent[] = meetings.flatMap((m) =>
+    const fromMeetings: BusyEvent[] = meetings.flatMap((m) => {
+      const start = Date.parse(m.startUtc);
+      const end = Date.parse(m.endUtc);
+      const times = m.recurrence ? occurrences(start, end, m.recurrence) : [{ start, end }];
       // Once a meeting is in your real calendar, your row shows that copy, so deleting it there frees the slot.
-      m.attendeeIds.filter((pid) => !(m.liveEvent && live[m.liveEvent.provider].connected && pid === meId)).map((pid) => ({
-        id: `${m.id}-${pid}`,
-        personId: pid,
-        startUtc: m.startUtc,
-        endUtc: m.endUtc,
-        title: m.title,
-        source: "fiutran" as const,
-      })),
-    );
+      const blocked = m.attendeeIds.filter((pid) => !(m.liveEvent && live[m.liveEvent.provider].connected && pid === meId));
+      return times.flatMap((o) =>
+        blocked.map((pid) => ({
+          id: `${m.id}-${o.start}-${pid}`,
+          personId: pid,
+          startUtc: new Date(o.start).toISOString(),
+          endUtc: new Date(o.end).toISOString(),
+          title: m.title,
+          source: "fiutran" as const,
+        })),
+      );
+    });
     const fromTimeOff: BusyEvent[] = meId
       ? timeOff.map((b) => ({
           id: b.id,
@@ -455,6 +466,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const clearDraft = useCallback(() => {
     setSelectionStart(null);
     setTitle("");
+    setRepeatState((r) => ({ ...r, freq: "none" }));
     resetCustomLength();
   }, [resetCustomLength]);
 
@@ -467,7 +479,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       endUtc: new Date(selectionStart + durationMin * 60_000).toISOString(),
       // Keep team order so attendee lists read consistently.
       attendeeIds: people.filter((p) => invited.includes(p.id)).map((p) => p.id),
+      // A series is anchored to the organiser's own time zone.
+      ...(repeat.freq !== "none" && me
+        ? { recurrence: { freq: repeat.freq, count: Math.min(MAX_OCCURRENCES, Math.max(2, repeat.count)), timeZone: me.timeZone } }
+        : {}),
     };
+    setRepeatState((r) => ({ ...r, freq: "none" }));
     setSelectionStart(null);
     setTitle("");
     resetCustomLength();
@@ -500,6 +517,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       startUtc: meeting.startUtc,
       endUtc: meeting.endUtc,
       attendeeNames: people.filter((p) => meeting.attendeeIds.includes(p.id)).map((p) => p.name),
+      recurrence: meeting.recurrence,
     })
       .then(async ({ id, link }) => {
         await syncOne(target);
@@ -507,7 +525,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         update({ provider: target, state: "saved", link });
       })
       .catch((err: Error) => update({ provider: target, state: "failed", error: err.message }));
-  }, [selectionStart, invited, title, durationMin, people, viewerTz, sendTarget, syncOne, resetCustomLength, teamMode, loadTeamWeek]);
+  }, [selectionStart, invited, title, durationMin, people, me, repeat, viewerTz, sendTarget, syncOne, resetCustomLength, teamMode, loadTeamWeek]);
 
   const value: AppState = {
     ready,
@@ -545,6 +563,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setTitle,
     selectionStart,
     setSelectionStart,
+    repeat,
+    setRepeat: setRepeatState,
     sendInvite,
     clearDraft,
     confirmation,

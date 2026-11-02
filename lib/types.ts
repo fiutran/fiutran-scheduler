@@ -38,6 +38,8 @@ export type Meeting = {
   startUtc: string;
   endUtc: string;
   attendeeIds: string[];
+  /** Repeating series (anchored to the organiser's time zone); absent for one-off meetings. */
+  recurrence?: import("./recurrence").Recurrence;
   /** Set when the meeting was also written to one of your real calendars. */
   liveEvent?: { provider: CalendarProvider; id: string };
 };

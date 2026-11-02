@@ -56,6 +56,15 @@ Without a database, each person's real calendar shows only in their own browser.
 
 Setup: Vercel → project → **Storage** → **Create** → **Upstash for Redis** (free plan) → connect it to the project (adds `KV_REST_API_URL` and `KV_REST_API_TOKEN`) → redeploy. Then each person reconnects their calendars once on **My profile**.
 
+### Repeating meetings
+
+**Repeat** (next to Length): every weekday, daily, weekly, every 2 weeks or monthly, for 2–52 meetings. A series is anchored to the organiser's time zone, so it stays at the same local time across daylight-saving changes (`lib/recurrence.ts`).
+
+- Google Calendar and Outlook get a native series (RRULE / Graph recurrence), editable as one in those apps. Outlook is sent Windows time-zone names (e.g. "India Standard Time").
+- iCloud gets one event per date (exact times without hand-built VTIMEZONE data).
+- Cancelling one occurrence in your calendar frees just that date in the app.
+- Availability and suggestions check the first meeting's date; later dates show on the grid and Team calendars when you browse to them.
+
 ### iCloud setup (per person, needs team sharing)
 
 Apple has no sign-in page for calendar access. On **My profile → iCloud Calendar → Connect**, enter your Apple ID and an **app-specific password** created at account.apple.com (Sign-In and Security → App-Specific Passwords). It's stored encrypted; revoke it at Apple to cut access. The app uses CalDAV (caldav.icloud.com) to read events (repeating events expanded by iCloud) and to create meetings when iCloud is chosen in **Add to**.

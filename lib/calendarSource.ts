@@ -10,6 +10,7 @@
  *
  * All functions are async so callers don't change when they hit the network.
  */
+import type { Recurrence } from "./recurrence";
 import type { BusyEvent, CalendarProvider, Person } from "./types";
 import { TEAM } from "./team";
 
@@ -91,7 +92,7 @@ export async function getLiveBusyEvents(
 /** Write: creates the meeting in your calendar. Returns the provider's event id and a link to it. */
 export async function createLiveEvent(
   provider: CalendarProvider,
-  meeting: { title: string; startUtc: string; endUtc: string; attendeeNames: string[] },
+  meeting: { title: string; startUtc: string; endUtc: string; attendeeNames: string[]; recurrence?: Recurrence },
 ): Promise<{ id: string; link?: string }> {
   const res = await fetch(`/api/${provider}/events`, {
     method: "POST",
@@ -148,6 +149,7 @@ export async function createTeamMeeting(m: {
   endUtc: string;
   attendeeIds: string[];
   addTo?: CalendarProvider;
+  recurrence?: Recurrence;
 }): Promise<{ writes: TeamWrite[]; failures: { personId: string; provider: CalendarProvider }[] }> {
   const res = await fetch("/api/meetings", {
     method: "POST",

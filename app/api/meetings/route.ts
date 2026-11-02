@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { TEAM } from "@/lib/team";
 import type { CalendarProvider } from "@/lib/types";
 import { PROVIDERS, activeSession } from "@/lib/server/providers";
+import { isValidRecurrence, type Recurrence } from "@/lib/recurrence";
 import { sameOrigin } from "@/lib/server/session";
 import { addMeeting, currentPersonId, teamConnections, type MeetingWrite } from "@/lib/server/store";
 import { writeTargetFor } from "@/lib/server/team";
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
   if (!me) return NextResponse.json({ error: "Sign in by connecting your calendar." }, { status: 401 });
 
   const body = (await req.json().catch(() => null)) as
-    | { title?: string; startUtc?: string; endUtc?: string; attendeeIds?: string[]; addTo?: CalendarProvider }
+    | { title?: string; startUtc?: string; endUtc?: string; attendeeIds?: string[]; addTo?: CalendarProvider; recurrence?: unknown }
     | null;
   const start = body?.startUtc ? Date.parse(body.startUtc) : NaN;
   const end = body?.endUtc ? Date.parse(body.endUtc) : NaN;
@@ -25,6 +26,10 @@ export async function POST(req: Request) {
   if (!body || Number.isNaN(start) || Number.isNaN(end) || end <= start || end - start > 24 * 3600_000 || !attendees.length) {
     return NextResponse.json({ error: "Invalid meeting" }, { status: 400 });
   }
+  if (body.recurrence !== undefined && !isValidRecurrence(body.recurrence)) {
+    return NextResponse.json({ error: "Invalid repeat settings" }, { status: 400 });
+  }
+  const recurrence = body.recurrence as Recurrence | undefined;
 
   const title = (body.title ?? "").trim().slice(0, 200) || "Untitled meeting";
   const startUtc = new Date(start).toISOString();
@@ -41,7 +46,7 @@ export async function POST(req: Request) {
       if (!target) return;
       try {
         const s = await activeSession(PROVIDERS[target], person.id);
-        const created = await PROVIDERS[target].createEvent(s, { title, startUtc, endUtc, description });
+        const created = await PROVIDERS[target].createEvent(s, { title, startUtc, endUtc, description, recurrence });
         writes.push({ personId: person.id, provider: target, eventId: created.id, link: created.link });
       } catch (err) {
         console.error(err);
@@ -56,6 +61,7 @@ export async function POST(req: Request) {
     startUtc,
     endUtc,
     attendeeIds: attendees.map((p) => p.id),
+    ...(recurrence ? { recurrence } : {}),
     organizerId: me,
     writes,
     createdAt: new Date().toISOString(),

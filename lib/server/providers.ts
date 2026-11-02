@@ -9,6 +9,7 @@
  *   MICROSOFT_TENANT (optional, default "common") – "common" = personal and work accounts
  */
 import "server-only";
+import { graphRecurrence, localDateTime, occurrences, rrule, type Recurrence } from "@/lib/recurrence";
 import { createICloudEvent, ICloudAuthError, listICloudEvents } from "./icloud";
 import { idTokenClaims, type LiveSession } from "./session";
 import { dbConfigured, readConn, writeConn } from "./store";
@@ -17,7 +18,14 @@ import type { CalendarProvider } from "@/lib/types";
 export class NotConnectedError extends Error {}
 
 export type LiveEvent = { id: string; startUtc: string; endUtc: string; title: string; link?: string };
-export type NewEvent = { title: string; startUtc: string; endUtc: string; description: string };
+export type NewEvent = {
+  title: string;
+  startUtc: string;
+  endUtc: string;
+  description: string;
+  /** Present for a repeating series; times are anchored to recurrence.timeZone. */
+  recurrence?: Recurrence;
+};
 
 type Tokens = { access_token: string; refresh_token?: string; expires_in: number; id_token?: string; scope?: string };
 
@@ -158,8 +166,14 @@ const google: Provider = {
       body: JSON.stringify({
         summary: e.title,
         description: e.description,
-        start: { dateTime: e.startUtc },
-        end: { dateTime: e.endUtc },
+        // A series needs local time + zone so it stays at the same local time across DST.
+        ...(e.recurrence
+          ? {
+              start: { dateTime: localDateTime(Date.parse(e.startUtc), e.recurrence.timeZone), timeZone: e.recurrence.timeZone },
+              end: { dateTime: localDateTime(Date.parse(e.endUtc), e.recurrence.timeZone), timeZone: e.recurrence.timeZone },
+              recurrence: [rrule(e.recurrence)],
+            }
+          : { start: { dateTime: e.startUtc }, end: { dateTime: e.endUtc } }),
         extendedProperties: { private: { fiutranScheduler: "1" } },
       }),
     });
@@ -193,6 +207,19 @@ type MsEvent = {
   end: MsDateTime;
   responseStatus?: { response?: string };
 };
+
+/** Windows time-zone names, which Outlook always accepts (IANA names are passed through for anything else). */
+const WINDOWS_ZONES: Record<string, string> = {
+  "Asia/Kolkata": "India Standard Time",
+  "Asia/Dubai": "Arabian Standard Time",
+  "Asia/Singapore": "Singapore Standard Time",
+  "Europe/Berlin": "W. Europe Standard Time",
+  "Europe/London": "GMT Standard Time",
+  "America/New_York": "Eastern Standard Time",
+  "America/Los_Angeles": "Pacific Standard Time",
+  "Australia/Sydney": "AUS Eastern Standard Time",
+};
+const windowsZone = (iana: string) => WINDOWS_ZONES[iana] ?? iana;
 
 // With Prefer: outlook.timezone="UTC", Graph returns UTC wall times without a zone suffix.
 const msUtc = (d: MsDateTime) => new Date(/[zZ]|[+-]\d\d:\d\d$/.test(d.dateTime) ? d.dateTime : `${d.dateTime}Z`).toISOString();
@@ -279,8 +306,19 @@ const outlook: Provider = {
       body: JSON.stringify({
         subject: e.title,
         body: { contentType: "text", content: e.description },
-        start: { dateTime: e.startUtc.replace("Z", ""), timeZone: "UTC" },
-        end: { dateTime: e.endUtc.replace("Z", ""), timeZone: "UTC" },
+        ...(e.recurrence
+          ? {
+              start: { dateTime: localDateTime(Date.parse(e.startUtc), e.recurrence.timeZone), timeZone: windowsZone(e.recurrence.timeZone) },
+              end: { dateTime: localDateTime(Date.parse(e.endUtc), e.recurrence.timeZone), timeZone: windowsZone(e.recurrence.timeZone) },
+              recurrence: (() => {
+                const r = graphRecurrence(Date.parse(e.startUtc), e.recurrence);
+                return { ...r, range: { ...r.range, recurrenceTimeZone: windowsZone(e.recurrence.timeZone) } };
+              })(),
+            }
+          : {
+              start: { dateTime: e.startUtc.replace("Z", ""), timeZone: "UTC" },
+              end: { dateTime: e.endUtc.replace("Z", ""), timeZone: "UTC" },
+            }),
         showAs: "busy",
       }),
     });
@@ -319,7 +357,13 @@ const icloud: Provider = {
   },
   async createEvent(s, e) {
     try {
-      return await createICloudEvent(s, e);
+      // Separate events per date: exact times without hand-written VTIMEZONE data.
+      if (!e.recurrence) return await createICloudEvent(s, e);
+      const created = [];
+      for (const o of occurrences(Date.parse(e.startUtc), Date.parse(e.endUtc), e.recurrence)) {
+        created.push(await createICloudEvent(s, { ...e, startUtc: new Date(o.start).toISOString(), endUtc: new Date(o.end).toISOString() }));
+      }
+      return created[0];
     } catch (err) {
       if (err instanceof ICloudAuthError) throw new NotConnectedError(err.message);
       throw err;
