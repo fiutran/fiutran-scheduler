@@ -11,7 +11,7 @@
  * All functions are async so callers don't change when they hit the network.
  */
 import type { Recurrence } from "./recurrence";
-import type { BusyEvent, CalendarProvider, Person } from "./types";
+import type { BusyEvent, CalendarProvider, Person, TimeOffBlock } from "./types";
 import { TEAM } from "./team";
 
 export async function getPeople(): Promise<Person[]> {
@@ -132,12 +132,40 @@ export class TeamSignInError extends Error {}
 export type TeamProblem = { personId: string; provider: CalendarProvider; error: string };
 
 /** Everyone's busy times in the range (titles only for your own events). */
-export async function getTeamBusy(from: Date, to: Date): Promise<{ events: BusyEvent[]; problems: TeamProblem[] }> {
+export async function getTeamBusy(
+  from: Date,
+  to: Date,
+): Promise<{ events: BusyEvent[]; problems: TeamProblem[]; myTimeOff: TimeOffBlock[] }> {
   const q = new URLSearchParams({ start: from.toISOString(), end: to.toISOString() });
   const res = await fetch(`/api/team/busy?${q}`, { cache: "no-store" });
   if (res.status === 401) throw new TeamSignInError((await res.json()).error);
   if (!res.ok) throw new Error("Couldn't load the team's calendars");
   return res.json();
+}
+
+/** The team-data change counter; it moves whenever anyone adds a meeting or time off, or (dis)connects a calendar. */
+export async function getTeamVersion(): Promise<number> {
+  const res = await fetch("/api/team/version", { cache: "no-store" });
+  if (res.status === 401) throw new TeamSignInError((await res.json()).error);
+  if (!res.ok) throw new Error("Couldn't check for team changes");
+  return ((await res.json()) as { version: number }).version;
+}
+
+/** Saves one of your time-off blocks for the team. */
+export async function saveTeamTimeOff(b: TimeOffBlock): Promise<void> {
+  const res = await fetch("/api/team/timeoff", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(b),
+  });
+  if (res.status === 401) throw new TeamSignInError((await res.json()).error);
+  if (!res.ok) throw new Error("Couldn't save the time off");
+}
+
+export async function deleteTeamTimeOff(id: string): Promise<void> {
+  const res = await fetch(`/api/team/timeoff?${new URLSearchParams({ id })}`, { method: "DELETE" });
+  if (res.status === 401) throw new TeamSignInError((await res.json()).error);
+  if (!res.ok) throw new Error("Couldn't remove the time off");
 }
 
 export type TeamWrite = { personId: string; provider: CalendarProvider; eventId: string; link?: string };

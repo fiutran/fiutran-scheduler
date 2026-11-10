@@ -30,3 +30,4 @@ async function command<T>(...args: (string | number)[]): Promise<T> {
 export const dbGet = (key: string) => command<string | null>("GET", key);
 export const dbSet = (key: string, value: string) => command<string>("SET", key, value);
 export const dbDel = (key: string) => command<number>("DEL", key);
+export const dbIncr = (key: string) => command<number>("INCR", key);

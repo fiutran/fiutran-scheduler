@@ -28,7 +28,7 @@ All event times are stored as UTC and converted only for display.
 
 With the env vars in `.env.example` set, **My profile → Connect** signs in for real (each provider is independent):
 
-- **Read:** your timed events show as busy on your row (titles visible only to you). All-day, "free" and declined events are ignored. Re-syncs when you return to the tab, or with **Sync now**.
+- **Read:** your timed events show as busy on your row (titles visible only to you). All-day, "free" and declined events are ignored. Syncs automatically (see "Live sync"); **Sync now** forces it.
 - **Write:** **Send invite** adds the meeting to your calendar. With both connected, choose **Add to: Google Calendar / Outlook** (remembered). Teammates are named in the description only, never added as guests, so nobody is emailed.
 - Delete or move the event in your calendar and your row updates on the next sync.
 - Your row shows only real data once any real calendar is connected; your name comes from that account.
@@ -53,6 +53,18 @@ Without a database, each person's real calendar shows only in their own browser.
 - **Send invite** saves the meeting and adds it quietly (no emails) to each attendee's main calendar: Diksha → Google, Aarti → Outlook. The organiser can pick another of their own calendars with **Add to** (including iCloud).
 - Deleting the meeting in your own calendar frees you in the app; adding, moving or deleting events in any connected calendar shows up on the next sync.
 - Only team members can see team data: connecting a calendar with a team email signs you in. Other accounts are refused.
+
+- **Block time off** is saved to the database too: teammates see it as busy (the reason stays private to you), and it survives a page reload.
+
+### Live sync
+
+No need to press **Sync now**. While the app is open and visible:
+
+- Every **10 seconds** it checks a change counter in the database (one tiny read). Anything a teammate does in the app (adds or removes time off, sends a meeting, connects or disconnects a calendar) shows up within about 10 seconds.
+- Every **60 seconds** it re-reads everyone's calendars, for events added, moved or deleted directly in Google Calendar, Outlook or iCloud.
+- A hidden tab doesn't poll; it catches up the moment you switch back to it.
+
+Code: `teamVersion` / `bumpVersion` in `lib/server/store.ts`, `app/api/team/version`, `app/api/team/timeoff`, and the live-sync effect in `components/AppProvider.tsx` (`CHANGE_POLL_MS`, `FULL_SYNC_MS`).
 
 Setup: Vercel → project → **Storage** → **Create** → **Upstash for Redis** (free plan) → connect it to the project (adds `KV_REST_API_URL` and `KV_REST_API_TOKEN`) → redeploy. Then each person reconnects their calendars once on **My profile**.
 
@@ -88,4 +100,4 @@ Only `lib/calendarSource.ts` changes (plus a server route for tokens):
 2. **`getPeople()`**: read the team from Microsoft Graph `/users` or Google Directory, merged with each person's saved profile (time zone, working hours). Graph `mailboxSettings` already holds working hours and time zone.
 3. **`getBusyEvents()`**: Outlook → `POST /me/calendar/getSchedule`; Google → `POST /calendar/v3/freeBusy`. Both return UTC busy intervals without titles for other people, which the UI already assumes. Fetch through a server route; cache per person and week.
 4. **Persistence**: profile changes, time-off blocks and "Send invite" are in React state now. Save them in a database, and have Send invite create a real event (Graph `POST /me/events` or Google `events.insert`), which needs write scope.
-5. **Sync**: Graph change notifications / Google push channels, or polling, to keep busy times fresh.
+5. **Sync**: done by polling (see "Live sync"). Graph change notifications / Google push channels could replace the 60-second calendar re-read later.

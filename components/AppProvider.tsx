@@ -12,6 +12,9 @@ import {
   getPeople,
   getTeamBusy,
   getTeamStatus,
+  getTeamVersion,
+  saveTeamTimeOff,
+  deleteTeamTimeOff,
   connectICloud as connectICloudApi,
   createTeamMeeting,
   TeamSignInError,
@@ -64,6 +67,10 @@ const EMPTY_SYNC: LiveSync = {
   error: null,
 };
 const SEND_TO_KEY = "fiutran.sendTo";
+/** Live sync: how often to check whether a teammate changed anything in the app (one cheap read). */
+const CHANGE_POLL_MS = 10_000;
+/** Live sync: how often to re-read everyone's calendars, for edits made directly in Google/Outlook/iCloud. */
+const FULL_SYNC_MS = 60_000;
 
 type AppState = {
   ready: boolean;
@@ -104,6 +111,8 @@ type AppState = {
   timeOff: TimeOffBlock[];
   addTimeOff: (b: Omit<TimeOffBlock, "id">) => void;
   removeTimeOff: (id: string) => void;
+  /** Set when saving or removing time off for the team failed. */
+  timeOffError: string | null;
 
   // Scheduling draft
   invited: string[];
@@ -178,6 +187,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [teamEvents, setTeamEvents] = useState<Record<string, BusyEvent[]>>({});
   const [teamProblems, setTeamProblems] = useState<TeamProblem[]>([]);
   const loadedWeeks = useRef(new Set<string>());
+  const [timeOffError, setTimeOffError] = useState<string | null>(null);
+  // Live sync bookkeeping: last team-data version seen, a load in flight, time-off saves in flight.
+  const teamVersion = useRef<number | null>(null);
+  const teamLoading = useRef(false);
+  const pendingTimeOff = useRef(0);
 
   const [invited, setInvited] = useState<string[]>([]);
   const [durationMin, setDurationMin] = useState(30);
@@ -273,20 +287,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setTeam(teamStatus);
   }, []);
 
-  /** Team mode: loads everyone's busy times for the week you're viewing. */
-  const loadTeamWeek = useCallback(async () => {
+  /**
+   * Team mode: loads everyone's busy times for the week you're viewing.
+   * `quiet` (background live sync) skips the "Syncing…" state and is skipped if a load is already running;
+   * `fresh` drops other weeks' cached data so anything deleted elsewhere disappears everywhere.
+   */
+  const loadTeamWeek = useCallback(async (opts: { quiet?: boolean; fresh?: boolean } = {}) => {
     if (!viewedMonday) return;
+    if (opts.quiet && teamLoading.current) return;
+    teamLoading.current = true;
     const monday = viewedMonday;
     const { from, to } = weekRange(monday);
-    setLive((cur) => {
-      const next = { ...cur };
-      PROVIDERS.forEach((p) => cur[p].connected && (next[p] = { ...cur[p], syncing: true }));
-      return next;
-    });
+    if (!opts.quiet)
+      setLive((cur) => {
+        const next = { ...cur };
+        PROVIDERS.forEach((p) => cur[p].connected && (next[p] = { ...cur[p], syncing: true }));
+        return next;
+      });
     try {
-      const { events, problems } = await getTeamBusy(from, to);
-      setTeamEvents((cur) => ({ ...cur, [monday]: events }));
+      const { events, problems, myTimeOff } = await getTeamBusy(from, to);
+      setTeamEvents((cur) => (opts.fresh ? { [monday]: events } : { ...cur, [monday]: events }));
       setTeamProblems(problems);
+      // Your blocks come from the server, unless you're in the middle of adding or removing one.
+      if (pendingTimeOff.current === 0) setTimeOff(myTimeOff ?? []);
       setLive((cur) => {
         const next = { ...cur };
         PROVIDERS.forEach((p) => {
@@ -302,16 +325,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         PROVIDERS.forEach((p) => (next[p] = { ...cur[p], syncing: false }));
         return next;
       });
+    } finally {
+      teamLoading.current = false;
     }
   }, [viewedMonday, meId, refreshStatuses]);
 
   /** Pulls your real events for the week you're viewing from one calendar. */
   const syncOne = useCallback(
-    async (p: CalendarProvider) => {
+    async (p: CalendarProvider, quiet = false) => {
       if (!viewedMonday || !meId) return;
       const monday = viewedMonday;
       const { from, to } = weekRange(monday);
-      setLive((cur) => ({ ...cur, [p]: { ...cur[p], syncing: true } }));
+      if (!quiet) setLive((cur) => ({ ...cur, [p]: { ...cur[p], syncing: true } }));
       try {
         const list = await getLiveBusyEvents(p, meId, from, to);
         setLiveEvents((cur) => ({ ...cur, [p]: { ...cur[p], [monday]: list } }));
@@ -340,6 +365,94 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [ready, connectedKey, teamMode, syncLive]);
+
+  // Live sync, while the tab is visible (hidden tabs catch up the moment you come back):
+  // - team mode: check every few seconds whether anyone changed something in the app (a meeting,
+  //   time off, a calendar connection) and reload straight away if so;
+  // - every minute, re-read the calendars themselves for edits made directly in Google/Outlook/iCloud.
+  useEffect(() => {
+    if (!ready || (!connectedKey && !teamMode)) return;
+    const visible = () => document.visibilityState === "visible";
+    let checking = false;
+    const checkForChanges = async () => {
+      if (!visible() || checking || pendingTimeOff.current > 0) return;
+      checking = true;
+      try {
+        const v = await getTeamVersion();
+        const changed = teamVersion.current !== null && v !== teamVersion.current;
+        teamVersion.current = v;
+        if (changed) await loadTeamWeek({ quiet: true, fresh: true });
+      } catch (err) {
+        if (err instanceof TeamSignInError) await refreshStatuses();
+      } finally {
+        checking = false;
+      }
+    };
+    const fullSync = () => {
+      if (!visible()) return;
+      if (teamMode) loadTeamWeek({ quiet: true });
+      else PROVIDERS.forEach((p) => live[p].connected && syncOne(p, true));
+    };
+    if (teamMode) checkForChanges();
+    const changeTimer = teamMode ? setInterval(checkForChanges, CHANGE_POLL_MS) : undefined;
+    const fullTimer = setInterval(fullSync, FULL_SYNC_MS);
+    return () => {
+      clearInterval(changeTimer);
+      clearInterval(fullTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, connectedKey, teamMode, loadTeamWeek, syncOne, refreshStatuses]);
+
+  /** After your own change: note the new version (so it isn't reloaded twice) and refresh now. */
+  const afterTeamChange = useCallback(async () => {
+    try {
+      teamVersion.current = await getTeamVersion();
+    } catch {
+      // The next check reloads instead.
+    }
+    await loadTeamWeek({ quiet: true });
+  }, [loadTeamWeek]);
+
+  const addTimeOff = useCallback(
+    (b: Omit<TimeOffBlock, "id">) => {
+      const block = { ...b, id: newId("off") };
+      setTimeOffError(null);
+      setTimeOff((cur) => [...cur, block].sort((a, z) => a.startUtc.localeCompare(z.startUtc)));
+      if (!teamMode) return;
+      // Saved for the team right away, so teammates see it on their next check (within seconds).
+      pendingTimeOff.current++;
+      saveTeamTimeOff(block)
+        .catch((err: Error) => {
+          setTimeOff((cur) => cur.filter((x) => x.id !== block.id));
+          setTimeOffError(`${err.message}. Please try again.`);
+        })
+        .finally(() => {
+          pendingTimeOff.current--;
+          afterTeamChange();
+        });
+    },
+    [teamMode, afterTeamChange],
+  );
+
+  const removeTimeOff = useCallback(
+    (id: string) => {
+      const removed = timeOff.find((b) => b.id === id);
+      setTimeOffError(null);
+      setTimeOff((cur) => cur.filter((b) => b.id !== id));
+      if (!teamMode) return;
+      pendingTimeOff.current++;
+      deleteTeamTimeOff(id)
+        .catch((err: Error) => {
+          if (removed) setTimeOff((cur) => [...cur, removed].sort((a, z) => a.startUtc.localeCompare(z.startUtc)));
+          setTimeOffError(`${err.message}. Please try again.`);
+        })
+        .finally(() => {
+          pendingTimeOff.current--;
+          afterTeamChange();
+        });
+    },
+    [teamMode, timeOff, afterTeamChange],
+  );
 
   const setConnection = useCallback(
     (p: CalendarProvider, on: boolean) => {
@@ -439,10 +552,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }))
       : [];
     if (teamMode) {
-      // Everything comes from the server: everyone's calendars plus meetings made in the app.
+      // Everything comes from the server: everyone's calendars, meetings made in the app and time off.
+      // Your own time off is shown from your local list, so adding or removing a block is instant.
       const seen = new Set<string>();
       const fromTeam = Object.values(teamEvents)
         .flat()
+        .filter((e) => !(e.source === "timeoff" && e.personId === meId))
         .filter((e) => !seen.has(e.id) && seen.add(e.id));
       return [...fromTeam, ...fromTimeOff];
     }
@@ -495,7 +610,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const update = (t: TeamSend) => setConfirmation((c) => (c && c.meeting.id === meeting.id ? { ...c, team: t } : c));
       createTeamMeeting({ ...meeting, addTo: sendTarget ?? undefined })
         .then(async ({ writes, failures }) => {
-          await loadTeamWeek();
+          await afterTeamChange();
           update({ state: "saved", writes, failures });
         })
         .catch((err: Error) => update({ state: "failed", error: err.message }));
@@ -525,7 +640,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         update({ provider: target, state: "saved", link });
       })
       .catch((err: Error) => update({ provider: target, state: "failed", error: err.message }));
-  }, [selectionStart, invited, title, durationMin, people, me, repeat, viewerTz, sendTarget, syncOne, resetCustomLength, teamMode, loadTeamWeek]);
+  }, [selectionStart, invited, title, durationMin, people, me, repeat, viewerTz, sendTarget, syncOne, resetCustomLength, teamMode, afterTeamChange]);
 
   const value: AppState = {
     ready,
@@ -553,8 +668,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     teamProblems,
     connectICloud,
     timeOff,
-    addTimeOff: (b) => setTimeOff((cur) => [...cur, { ...b, id: newId("off") }].sort((a, z) => a.startUtc.localeCompare(z.startUtc))),
-    removeTimeOff: (id) => setTimeOff((cur) => cur.filter((b) => b.id !== id)),
+    addTimeOff,
+    removeTimeOff,
+    timeOffError,
     invited,
     toggleInvite,
     durationMin,

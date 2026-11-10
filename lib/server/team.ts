@@ -6,9 +6,9 @@
 import "server-only";
 import { occurrences } from "@/lib/recurrence";
 import { TEAM } from "@/lib/team";
-import type { BusyEvent, CalendarProvider, Person } from "@/lib/types";
+import type { BusyEvent, CalendarProvider, Person, TimeOffBlock } from "@/lib/types";
 import { NotConnectedError, PROVIDERS, activeSession } from "./providers";
-import { readMeetings, teamConnections, type StoredMeeting } from "./store";
+import { readMeetings, readTimeOff, teamConnections, type StoredMeeting } from "./store";
 
 export type Problem = { personId: string; provider: CalendarProvider; error: string };
 
@@ -27,8 +27,12 @@ export function writeTargetFor(
 }
 
 /** Everyone's busy times in [from, to), plus meetings created in the app. */
-export async function teamBusy(me: string, from: Date, to: Date): Promise<{ events: BusyEvent[]; problems: Problem[] }> {
-  const conns = await teamConnections();
+export async function teamBusy(
+  me: string,
+  from: Date,
+  to: Date,
+): Promise<{ events: BusyEvent[]; problems: Problem[]; myTimeOff: TimeOffBlock[] }> {
+  const [conns, timeOff] = await Promise.all([teamConnections(), readTimeOff()]);
   const problems: Problem[] = [];
   const startIso = from.toISOString();
   const endIso = to.toISOString();
@@ -82,5 +86,20 @@ export async function teamBusy(me: string, from: Date, to: Date): Promise<{ even
       })),
     );
   });
-  return { events: [...lists.flat(), ...fromMeetings], problems };
+  // Time off blocked in the app: busy for everyone to see; the reason is only shown to its owner.
+  const fromTimeOff: BusyEvent[] = timeOff
+    .filter((b) => Date.parse(b.startUtc) < to.getTime() && Date.parse(b.endUtc) > from.getTime())
+    .map((b) => ({
+      id: b.id,
+      personId: b.personId,
+      startUtc: b.startUtc,
+      endUtc: b.endUtc,
+      title: b.personId === me ? `Time off: ${b.reason}` : undefined,
+      source: "timeoff" as const,
+    }));
+  const myTimeOff = timeOff
+    .filter((b) => b.personId === me)
+    .map(({ id, startUtc, endUtc, reason }) => ({ id, startUtc, endUtc, reason }))
+    .sort((a, z) => a.startUtc.localeCompare(z.startUtc));
+  return { events: [...lists.flat(), ...fromMeetings, ...fromTimeOff], problems, myTimeOff };
 }

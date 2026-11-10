@@ -255,7 +255,7 @@ function CalendarsCard() {
                     ) : sync.error ? (
                       <span className="text-busy-700">{sync.error}</span>
                     ) : sync.lastSynced ? (
-                      `Synced at ${fmtTime(sync.lastSynced, viewerTz)} ${tzAbbr(viewerTz, sync.lastSynced)}`
+                      `Live sync on · last synced ${fmtTime(sync.lastSynced, viewerTz)} ${tzAbbr(viewerTz, sync.lastSynced)}`
                     ) : null}
                   </p>
                 )}
@@ -327,7 +327,7 @@ function CalendarsCard() {
 }
 
 function TimeOffCard() {
-  const { selectedDay, today, me, viewerTz, timeOff, addTimeOff, removeTimeOff } = useApp();
+  const { selectedDay, today, me, viewerTz, timeOff, addTimeOff, removeTimeOff, timeOffError, teamMode } = useApp();
   const [day, setDay] = useState(selectedDay < today ? today : selectedDay);
   const [from, setFrom] = useState(14 * 60);
   const [to, setTo] = useState(19 * 60);
@@ -354,7 +354,9 @@ function TimeOffCard() {
         <Icon name="calendar" className="h-4 w-4 text-accent-600" />
         Block time off
       </h2>
-      <p className="text-sm text-ink-faint">Entered in your time zone ({tzAbbr(me.timeZone, Date.now())}). Blocks show as busy in the grid.</p>
+      <p className="text-sm text-ink-faint">
+        Entered in your time zone ({tzAbbr(me.timeZone, Date.now())}). Blocks show as busy in the grid{teamMode ? " and are shared with the team straight away (only you see the reason)" : ""}.
+      </p>
 
       <form onSubmit={add} className="mt-4 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[1.2fr_1fr_1fr_2fr_auto]" noValidate>
         <DateField label="Day" value={day} onChange={setDay} min={today} today={today} />
@@ -403,6 +405,11 @@ function TimeOffCard() {
       {error && (
         <p id="off-error" role="alert" className="mt-2 text-sm font-medium text-busy-700">
           {error}
+        </p>
+      )}
+      {timeOffError && (
+        <p role="alert" className="mt-2 text-sm font-medium text-busy-700">
+          {timeOffError}
         </p>
       )}
 
