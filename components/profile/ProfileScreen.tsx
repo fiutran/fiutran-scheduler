@@ -264,17 +264,6 @@ function CalendarsCard() {
                 {id === "icloud" && !on && sync.configured && !teamMode && (
                   <span className="max-w-[200px] text-xs text-ink-faint">Connect Google or Outlook first, so the app knows who you are.</span>
                 )}
-                {real && (
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={syncLive}
-                    disabled={sync.syncing}
-                    aria-label={`Sync ${name} now`}
-                  >
-                    Sync now
-                  </button>
-                )}
                 <button
                   type="button"
                   className={on ? "btn-secondary" : "btn-primary"}

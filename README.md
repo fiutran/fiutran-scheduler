@@ -1,6 +1,6 @@
 # Fiutran Scheduler (prototype)
 
-Team meeting scheduler for Fiutran (prototype). The team is **Diksha** (ms.dikshasharmaa@gmail.com, Google Calendar) and **Aarti** (letstalk@fiutran.com, Outlook). There is **no sample data**: busy times come only from real, two-way calendar connections and meetings or time off created in the app. With the optional shared database (see "Team sharing"), everyone sees each other's real availability, including iCloud.
+Team meeting scheduler for Fiutran (prototype). The team is **Diksha** (ms.dikshasharmaa@gmail.com, Google Calendar) and **Aarti** (letstalk@fiutran.com, Outlook). There is **no sample data**: busy times come only from real, two-way calendar connections and meetings or time off created in the app. With the shared database (see "Team sharing"), everyone sees each other's real availability, including iCloud.
 
 ```bash
 cd fiutran-scheduler
@@ -15,8 +15,9 @@ Stack: Next.js (App Router), TypeScript, Tailwind CSS, `date-fns-tz` for IANA ti
 | Path | What |
 |---|---|
 | `lib/team.ts` | The team: names, emails, time zones, working hours. Whoever connects a calendar is matched to their row by email. |
-| `lib/calendarSource.ts` | **The only data entry point.** `getPeople()`, `getBusyEvents()` (empty until the shared database exists), plus the real Google/Outlook read/write calls. |
-| `app/api/google/*`, `lib/server/googleAuth.ts` | Server side of the Google connection: OAuth, token refresh, encrypted cookie, Calendar API calls. |
+| `lib/calendarSource.ts` | **The only client data entry point.** Calls for connecting calendars, reading and writing events, and the team endpoints. |
+| `app/api/[provider]/*`, `lib/server/providers.ts`, `lib/server/icloud.ts` | Server side of the calendar connections: OAuth (Google, Outlook), CalDAV (iCloud), token refresh, calendar API calls. |
+| `app/api/team/*`, `app/api/meetings`, `lib/server/store.ts`, `lib/server/db.ts` | Team sharing: shared busy times, time off, meetings and the change counter, stored in the database. |
 | `lib/availability.ts` | Free / busy / off-hours logic and suggested-time search. Pure functions, UTC in, UTC out. |
 | `lib/time.ts` | Time zone helpers: conversion, formatting, abbreviations. |
 | `components/AppProvider.tsx` | React context: loaded data, viewer time zone, profile edits, sent meetings, time-off blocks, calendar connections. |
@@ -24,16 +25,16 @@ Stack: Next.js (App Router), TypeScript, Tailwind CSS, `date-fns-tz` for IANA ti
 
 All event times are stored as UTC and converted only for display.
 
-## Real calendars: Google and Outlook (two-way, optional)
+## Real calendars: Google, Outlook and iCloud (two-way)
 
 With the env vars in `.env.example` set, **My profile → Connect** signs in for real (each provider is independent):
 
-- **Read:** your timed events show as busy on your row (titles visible only to you). All-day, "free" and declined events are ignored. Syncs automatically (see "Live sync"); **Sync now** forces it.
+- **Read:** your timed events show as busy on your row (titles visible only to you). All-day, "free" and declined events are ignored. Syncs automatically (see "Live sync").
 - **Write:** **Send invite** adds the meeting to your calendar. With both connected, choose **Add to: Google Calendar / Outlook** (remembered). Teammates are named in the description only, never added as guests, so nobody is emailed.
 - Delete or move the event in your calendar and your row updates on the next sync.
 - Your row shows only real data once any real calendar is connected; your name comes from that account.
 - Tokens are kept in encrypted, httpOnly cookies (AES-256-GCM, keyed by `AUTH_SECRET`). **Disconnect** forgets them (and revokes at Google).
-- A teammate's real calendar isn't visible to others yet (that needs the shared database); the Team screen says "Not shared yet" and shows their working hours plus meetings sent from the app.
+- Without the shared database, your calendar shows only in your own browser and teammates show as "Not shared yet". With it, see "Team sharing".
 
 Code: `lib/server/providers.ts` (one adapter per provider), `app/api/[provider]/*` (connect, callback, status, events, disconnect), client calls in `lib/calendarSource.ts`.
 
@@ -43,6 +44,7 @@ Code: `lib/server/providers.ts` (one adapter per provider), `app/api/[provider]/
 2. **Google Auth Platform**: Branding (app name, emails), Audience **External** in **Testing** with your Gmail under **Test users**, Data access scope `https://www.googleapis.com/auth/calendar.events`.
 3. **Clients → Create client → Web application**, redirect URI `https://<your-site>/api/google/callback` (and `http://localhost:3000/api/google/callback` for local).
 4. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_SECRET`, then redeploy.
+5. **Publish the app** (Google Auth Platform → Audience → **Publish app**). While it stays in **Testing**, only listed test users can connect and Google expires each connection after 7 days, so everyone has to reconnect weekly. Because the app can edit calendars, Google may ask for verification; until then people see an "unverified app" warning they can click past.
 
 ### Team sharing (shared database)
 
@@ -58,7 +60,7 @@ Without a database, each person's real calendar shows only in their own browser.
 
 ### Live sync
 
-No need to press **Sync now**. While the app is open and visible:
+While the app is open and visible, it syncs on its own:
 
 - Every **10 seconds** it checks a change counter in the database (one tiny read). Anything a teammate does in the app (adds or removes time off, sends a meeting, connects or disconnects a calendar) shows up within about 10 seconds.
 - Every **60 seconds** it re-reads everyone's calendars, for events added, moved or deleted directly in Google Calendar, Outlook or iCloud.
@@ -92,12 +94,6 @@ Apple has no sign-in page for calendar access. On **My profile → iCloud Calend
 
 Personal accounts (outlook.com, hotmail, live) can connect straight away. A work or school account may need its IT admin to approve the app once.
 
-## Connecting real calendars later
+## Possible later improvements
 
-Only `lib/calendarSource.ts` changes (plus a server route for tokens):
-
-1. **Auth**: add Microsoft (Entra ID) and Google OAuth sign-in with read-only scopes (`Calendars.Read`, `https://www.googleapis.com/auth/calendar.freebusy`). Keep tokens server-side in a Next.js route handler.
-2. **`getPeople()`**: read the team from Microsoft Graph `/users` or Google Directory, merged with each person's saved profile (time zone, working hours). Graph `mailboxSettings` already holds working hours and time zone.
-3. **`getBusyEvents()`**: Outlook → `POST /me/calendar/getSchedule`; Google → `POST /calendar/v3/freeBusy`. Both return UTC busy intervals without titles for other people, which the UI already assumes. Fetch through a server route; cache per person and week.
-4. **Persistence**: profile changes, time-off blocks and "Send invite" are in React state now. Save them in a database, and have Send invite create a real event (Graph `POST /me/events` or Google `events.insert`), which needs write scope.
-5. **Sync**: done by polling (see "Live sync"). Graph change notifications / Google push channels could replace the 60-second calendar re-read later.
+- **Push instead of polling:** Google push channels (`events.watch`) and Microsoft Graph change notifications could replace the 60-second calendar re-read for those two providers, bringing outside edits down to about 10 seconds. This needs a public webhook route that bumps the team change counter, plus a job that renews each subscription before it expires (days). iCloud has no push and would keep polling.

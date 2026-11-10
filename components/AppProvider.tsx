@@ -350,7 +350,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const connectedKey = PROVIDERS.filter((p) => live[p].connected).join(",");
-  /** Runs on load, on tab focus, after sending an invite, and from "Sync now". */
+  /** Runs on load, on tab focus, and after sending an invite. */
   const syncLive = useCallback(() => {
     if (teamMode) loadTeamWeek();
     else PROVIDERS.forEach((p) => live[p].connected && syncOne(p));
