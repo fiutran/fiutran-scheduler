@@ -28,7 +28,7 @@ All event times are stored as UTC and converted only for display.
 
 With the env vars in `.env.example` set, **My profile → Connect** signs in for real (each provider is independent):
 
-- **Read:** your timed events show as busy on your row (titles visible only to you). All-day, "free" and declined events are ignored. Syncs automatically (see "Live sync"); **Sync now** forces it.
+- **Read:** your timed events show as busy on your row (titles visible only to you). All-day, "free" and declined events are ignored. Syncs automatically (see "Live sync").
 - **Write:** **Send invite** adds the meeting to your calendar. With both connected, choose **Add to: Google Calendar / Outlook** (remembered). Teammates are named in the description only, never added as guests, so nobody is emailed.
 - Delete or move the event in your calendar and your row updates on the next sync.
 - Your row shows only real data once any real calendar is connected; your name comes from that account.
@@ -58,7 +58,7 @@ Without a database, each person's real calendar shows only in their own browser.
 
 ### Live sync
 
-No need to press **Sync now**. While the app is open and visible:
+While the app is open and visible, it syncs on its own:
 
 - Every **10 seconds** it checks a change counter in the database (one tiny read). Anything a teammate does in the app (adds or removes time off, sends a meeting, connects or disconnects a calendar) shows up within about 10 seconds.
 - Every **60 seconds** it re-reads everyone's calendars, for events added, moved or deleted directly in Google Calendar, Outlook or iCloud.
